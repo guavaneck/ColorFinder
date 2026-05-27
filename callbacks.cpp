@@ -15,9 +15,10 @@ enum {
 
 // --- AppState lifecycle ---
 
-AppState *app_state_new() {
-  AppState *state  = new AppState();
+AppState *app_state_new(std::unordered_map<std::string, std::string> cfg) {
+  AppState *state = new AppState();
   state->current_path = fs::current_path();
+  state->cfg = std::move(cfg);
   return state;
 }
 

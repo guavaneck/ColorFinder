@@ -1,6 +1,7 @@
 #pragma once
 #include <gtk/gtk.h>
 #include <filesystem>
+#include <unordered_map>
+#include <string>
 
-// Creates and returns the fully-assembled main application window.
-GtkWidget *create_main_window();
+GtkWidget *create_main_window(std::unordered_map<std::string, std::string> cfg);
