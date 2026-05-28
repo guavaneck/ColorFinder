@@ -12,18 +12,36 @@ elseif(UNIX)
   set(PLATFORM_LINUX TRUE)
 endif()
 
+# ----- Dear ImGui (vendored under third_party/imgui/) -----
+# Expected files: imgui.cpp, imgui_draw.cpp, imgui_tables.cpp,
+#                 imgui_widgets.cpp, imgui_demo.cpp (optional)
+
+add_library(imgui STATIC
+  third_party/imgui/imgui.cpp
+  third_party/imgui/imgui_draw.cpp
+  third_party/imgui/imgui_tables.cpp
+  third_party/imgui/imgui_widgets.cpp
+)
+target_include_directories(imgui PUBLIC third_party/imgui)
+
 # ----- Sokol (header-only, vendored under third_party/sokol/) -----
+# sokol_imgui.h lives alongside the other sokol headers.
+# It needs imgui headers visible at its include site.
 
 add_library(sokol_impl STATIC third_party/sokol/sokol_impl.cpp)
-target_include_directories(sokol_impl PUBLIC third_party/sokol)
+target_include_directories(sokol_impl PUBLIC
+  third_party/sokol
+  third_party/imgui   # sokol_imgui.h includes <imgui.h>
+)
+target_link_libraries(sokol_impl PUBLIC imgui)
 
 if(PLATFORM_LINUX)
   target_compile_definitions(sokol_impl PUBLIC SOKOL_GLCORE SOKOL_LINUX_WAYLAND)
   find_package(PkgConfig REQUIRED)
-  pkg_check_modules(GL       REQUIRED gl)
-  pkg_check_modules(X11      REQUIRED x11)
-  pkg_check_modules(XI       REQUIRED xi)
-  pkg_check_modules(XCURSOR  REQUIRED xcursor)
+  pkg_check_modules(GL             REQUIRED gl)
+  pkg_check_modules(X11            REQUIRED x11)
+  pkg_check_modules(XI             REQUIRED xi)
+  pkg_check_modules(XCURSOR        REQUIRED xcursor)
   pkg_check_modules(WAYLAND_CLIENT REQUIRED wayland-client)
   pkg_check_modules(WAYLAND_EGL    REQUIRED wayland-egl)
   pkg_check_modules(XKBCOMMON      REQUIRED xkbcommon)
@@ -54,10 +72,13 @@ elseif(PLATFORM_MACOS)
   )
 endif()
 
-# ----- stb (header-only, vendored under third_party/stb/) -----
+add_library(stb STATIC
+  third_party/stb/stb_impl.cpp
+)
 
-add_library(stb INTERFACE)
-target_include_directories(stb INTERFACE third_party/stb)
+target_include_directories(stb PUBLIC
+  third_party/stb
+)
 
 # ----- App sources -----
 
@@ -72,10 +93,11 @@ add_executable(colorfinder
 
 target_include_directories(colorfinder PRIVATE
   third_party/sokol
+  third_party/imgui
   third_party/stb
 )
 
-target_link_libraries(colorfinder PRIVATE sokol_impl)
+target_link_libraries(colorfinder PRIVATE sokol_impl imgui stb)
 
 if(PLATFORM_LINUX)
   target_link_libraries(colorfinder PRIVATE

@@ -2,37 +2,63 @@
 #include "operations.h"
 #include "config.h"
 #include <algorithm>
+#include <cctype>
 #include <cstring>
 #include <cstdlib>
 #include <ctime>
-#include <sys/stat.h>
 
 namespace fs = std::filesystem;
 
-// ----- Sidebar -----
+// ----- sidebar -----
 
 std::vector<SidebarItem> sidebar_default_items() {
   const char *home = std::getenv("HOME");
   std::string h = home ? home : "/";
-
   return {
-    { "Home",      fs::path(h),                    ICON_FOLDER_HOME  },
-    { "Downloads", fs::path(h) / "Downloads",      ICON_FOLDER_DL    },
-    { "Documents", fs::path(h) / "Documents",      ICON_FOLDER_DOCS  },
-    { "Pictures",  fs::path(h) / "Pictures",       ICON_FOLDER_PIC   },
-    { "Music",     fs::path(h) / "Music",           ICON_FOLDER_MUSIC },
-    { "Videos",    fs::path(h) / "Videos",          ICON_FOLDER_VID   },
-    { "Desktop",   fs::path(h) / "Desktop",         ICON_FOLDER_DESK  },
+    { "Home",      fs::path(h),                ICON_FOLDER_HOME  },
+    { "Downloads", fs::path(h) / "Downloads",  ICON_FOLDER_DL    },
+    { "Documents", fs::path(h) / "Documents",  ICON_FOLDER_DOCS  },
+    { "Pictures",  fs::path(h) / "Pictures",   ICON_FOLDER_PIC   },
+    { "Music",     fs::path(h) / "Music",      ICON_FOLDER_MUSIC },
+    { "Videos",    fs::path(h) / "Videos",     ICON_FOLDER_VID   },
+    { "Desktop",   fs::path(h) / "Desktop",    ICON_FOLDER_DESK  },
   };
 }
 
-// ----- Helpers -----
+// ----- icon selection -----
+
+int icon_for_entry(const FileEntry &fe, bool selected) {
+  if (fe.is_dir) return selected ? ICON_FOLDER_SEL : ICON_FOLDER;
+
+  std::string ext;
+  auto dot = fe.name.rfind('.');
+  if (dot != std::string::npos) ext = fe.name.substr(dot + 1);
+  for (auto &ch : ext) ch = (char)std::tolower((unsigned char)ch);
+
+  if (ext=="png"||ext=="jpg"||ext=="jpeg"||ext=="gif"||ext=="svg"||ext=="bmp"||ext=="webp")
+    return selected ? ICON_FILE_IMAGE_SEL : ICON_FILE_IMAGE;
+  if (ext=="mp3"||ext=="flac"||ext=="wav"||ext=="ogg"||ext=="aac")
+    return selected ? ICON_FILE_AUDIO_SEL : ICON_FILE_AUDIO;
+  if (ext=="mp4"||ext=="mkv"||ext=="avi"||ext=="mov"||ext=="webm")
+    return selected ? ICON_FILE_VIDEO_SEL : ICON_FILE_VIDEO;
+  if (ext=="txt"||ext=="md"||ext=="rst"||ext=="log")
+    return selected ? ICON_FILE_TEXT_SEL : ICON_FILE_TEXT;
+  if (ext=="cpp"||ext=="c"||ext=="h"||ext=="py"||ext=="rs"||
+      ext=="go"||ext=="js"||ext=="ts"||ext=="sh"||ext=="lua")
+    return selected ? ICON_FILE_CODE_SEL : ICON_FILE_CODE;
+  if (ext=="zip"||ext=="tar"||ext=="gz"||ext=="xz"||ext=="bz2"||ext=="7z"||ext=="rar")
+    return selected ? ICON_FILE_ARCHIVE_SEL : ICON_FILE_ARCHIVE;
+  if (ext=="pdf")
+    return selected ? ICON_FILE_PDF_SEL : ICON_FILE_PDF;
+  return selected ? ICON_FILE_SEL : ICON_FILE;
+}
+
+// ----- helpers -----
 
 static std::string format_mtime(const fs::path &p) {
   std::error_code ec;
   auto ftime = fs::last_write_time(p, ec);
   if (ec) return "";
-  // Convert to time_t
   auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
     ftime - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
   std::time_t tt = std::chrono::system_clock::to_time_t(sctp);
@@ -49,7 +75,7 @@ static void sort_entries(std::vector<FileEntry> &entries) {
     });
 }
 
-// ----- Lifecycle -----
+// ----- lifecycle -----
 
 AppState *app_state_new(std::unordered_map<std::string, std::string> cfg) {
   AppState *s     = new AppState();
@@ -61,7 +87,7 @@ AppState *app_state_new(std::unordered_map<std::string, std::string> cfg) {
 
 void app_state_free(AppState *state) { delete state; }
 
-// ----- Navigation -----
+// ----- navigation -----
 
 void refresh_entries(AppState *state) {
   state->entries.clear();
@@ -72,9 +98,9 @@ void refresh_entries(AppState *state) {
   std::error_code ec;
   for (const auto &e : fs::directory_iterator(state->current_path, ec)) {
     FileEntry fe;
-    fe.name    = e.path().filename().string();
-    fe.is_dir  = fs::is_directory(e, ec);
-    fe.size    = fe.is_dir ? 0 : fs::file_size(e, ec);
+    fe.name     = e.path().filename().string();
+    fe.is_dir   = fs::is_directory(e, ec);
+    fe.size     = fe.is_dir ? 0 : fs::file_size(e, ec);
     fe.modified = format_mtime(e.path());
     state->entries.push_back(std::move(fe));
   }
@@ -121,7 +147,7 @@ void navigate_into_selected(AppState *state) {
     navigate_to(state, state->current_path / fe.name);
 }
 
-// ----- Preview -----
+// ----- preview -----
 
 void refresh_preview(AppState *state) {
   state->preview_entries.clear();
@@ -145,7 +171,7 @@ void refresh_preview(AppState *state) {
   sort_entries(state->preview_entries);
 }
 
-// ----- Actions -----
+// ----- actions -----
 
 void action_open_selected(AppState *state,
                           const std::unordered_map<std::string,std::string> &cfg) {
@@ -165,8 +191,7 @@ void action_open_selected(AppState *state,
   std::string key     = "opener_ext_" + ext;
   std::string command = config_get(cfg, key,
                           config_get(cfg, "opener_fallback", "xdg-open %f"));
-
-  std::string quoted = "\"" + full.string() + "\"";
+  std::string quoted  = "\"" + full.string() + "\"";
   size_t pos;
   while ((pos = command.find("%f")) != std::string::npos)
     command.replace(pos, 2, quoted);
@@ -208,15 +233,14 @@ void action_rename(AppState *state, const std::string &new_name) {
   refresh_entries(state);
 }
 
-// ----- Selection -----
+// ----- selection -----
 
 void select_move(AppState *state, int delta) {
   if (state->entries.empty()) return;
   int n = (int)state->entries.size();
-  if (state->selected_index < 0) {
+  if (state->selected_index < 0)
     state->selected_index = delta > 0 ? 0 : n - 1;
-  } else {
+  else
     state->selected_index = std::clamp(state->selected_index + delta, 0, n - 1);
-  }
   refresh_preview(state);
 }
