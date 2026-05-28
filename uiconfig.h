@@ -35,7 +35,7 @@ struct UIConfig {
   Color color_warning_text    = {136, 136, 136, 255};
 
   // Layout
-  float sidebar_width         = 160.f;
+  float sidebar_width         = 1.f;
   float preview_width         = 200.f;
   float min_width_warning     = 300.f;
   float min_width_preview     = 640.f;
@@ -46,7 +46,7 @@ struct UIConfig {
   float icon_label_gap        = 6.f;
 
   // Sprites
-  std::string icons_sheet     = "assets/icons.png";
+  std::string icons_sheet     = "third_party/assets/icons.png";
   int         icon_size       = 16;
 
   // Keybinds (raw strings from config, resolved at input time)

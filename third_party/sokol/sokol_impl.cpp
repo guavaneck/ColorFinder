@@ -6,6 +6,7 @@
   #define SOKOL_METAL
 #else
   #define SOKOL_GLCORE
+  #define SOKOL_LINUX_WAYLAND
 #endif
 
 #define SOKOL_IMPL

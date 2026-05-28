@@ -66,35 +66,37 @@ static const int MAX_VERTS   = 65536;
 static const int MAX_INDICES = MAX_VERTS * 3;
 
 struct Renderer {
-  sg_shader   shader     = {};
-  sg_pipeline pip        = {};
-  sg_buffer   vbuf       = {};
-  sg_buffer   ibuf       = {};
-  sg_bindings bindings   = {};
+  sg_shader   shader   = {};
+  sg_pipeline pip      = {};
+  sg_bindings bindings = {};
 
-  // White 1×1 texture used for solid color rects
-  sg_image    white_tex  = {};
+  sg_image white_tex  = {};
+  sg_image icons_tex  = {};
+  sg_image font_tex   = {};
 
-  // Icons sprite sheet
-  sg_image    icons_tex  = {};
-  int         icons_cols = 0; // number of cells per row
-  int         icons_cell = 16;
+  int icons_cols = 0;
+  int icons_cell = 16;
 
-  // Font
-  sg_image         font_tex  = {};
-  stbtt_bakedchar  font_chars[96] = {}; // ASCII 32..127
-  float            font_size = 12.f;
-  float            font_scale = 1.f;
-  int              font_tex_w = 512;
-  int              font_tex_h = 512;
+  stbtt_bakedchar font_chars[96] = {};
+  float           font_size      = 12.f;
+  int             font_tex_w     = 512;
+  int             font_tex_h     = 512;
 
-  // Per-frame batches
-  Batch solid_batch;   // uses white_tex
-  Batch icon_batch;    // uses icons_tex
-  Batch font_batch;    // uses font_tex
+  // per-batch buffers
+  sg_buffer solid_vbuf = {}, solid_ibuf = {};
+  sg_buffer icon_vbuf  = {}, icon_ibuf  = {};
+  sg_buffer font_vbuf  = {}, font_ibuf  = {};
 
-  // Framebuffer size
+  Batch solid_batch;
+  Batch icon_batch;
+  Batch font_batch;
+
   float fb_w = 0, fb_h = 0;
+
+  sg_sampler nearest_sampler = {};
+  sg_view    solid_view      = {};
+  sg_view    icon_view       = {};
+  sg_view    font_view       = {};
 };
 
 static Renderer R;
@@ -133,7 +135,7 @@ static sg_image make_white_texture() {
   sg_image_desc d = {};
   d.width   = 1;
   d.height  = 1;
-  d.data.subimage[0][0] = SG_RANGE(pixel);
+  d.data.mip_levels[0] = SG_RANGE(pixel);
   return sg_make_image(&d);
 }
 
@@ -147,7 +149,7 @@ static sg_image load_png(const std::string &path, int *out_w, int *out_h) {
   sg_image_desc d = {};
   d.width  = w;
   d.height = h;
-  d.data.subimage[0][0] = { data, (size_t)(w * h * 4) };
+  d.data.mip_levels[0] = { data, (size_t)(w * h * 4) };
   sg_image img = sg_make_image(&d);
   stbi_image_free(data);
   if (out_w) *out_w = w;
@@ -205,7 +207,7 @@ static void load_font(const std::string &font_path, float font_size) {
   sg_image_desc d = {};
   d.width  = R.font_tex_w;
   d.height = R.font_tex_h;
-  d.data.subimage[0][0] = { rgba.data(), rgba.size() };
+  d.data.mip_levels[0] = { rgba.data(), rgba.size() };
   R.font_tex = sg_make_image(&d);
 }
 
@@ -216,17 +218,18 @@ static void load_font(const std::string &font_path, float font_size) {
 void ui_init(const UIConfig &cfg) {
   // ----- Shader -----
   sg_shader_desc sd = {};
-  sd.vs.source = VS_SRC;
-  sd.fs.source = FS_SRC;
-  sd.vs.uniform_blocks[0].size = sizeof(float) * 2;
-  sd.vs.uniform_blocks[0].uniforms[0].name  = "u_resolution";
-  sd.vs.uniform_blocks[0].uniforms[0].type  = SG_UNIFORMTYPE_FLOAT2;
-  sd.fs.images[0].used = true;
-  sd.fs.samplers[0].used = true;
-  sd.fs.image_sampler_pairs[0].used = true;
-  sd.fs.image_sampler_pairs[0].image_slot   = 0;
-  sd.fs.image_sampler_pairs[0].sampler_slot = 0;
-  sd.fs.image_sampler_pairs[0].glsl_name    = "u_tex";
+  sd.vertex_func.source   = VS_SRC;
+  sd.fragment_func.source = FS_SRC;
+  sd.uniform_blocks[0].stage = SG_SHADERSTAGE_VERTEX;
+  sd.uniform_blocks[0].size  = sizeof(float) * 2;
+  sd.uniform_blocks[0].glsl_uniforms[0].type      = SG_UNIFORMTYPE_FLOAT2;
+  sd.uniform_blocks[0].glsl_uniforms[0].glsl_name = "u_resolution";
+  sd.views[0].texture.stage = SG_SHADERSTAGE_FRAGMENT;
+  sd.samplers[0].stage      = SG_SHADERSTAGE_FRAGMENT;
+  sd.texture_sampler_pairs[0].stage       = SG_SHADERSTAGE_FRAGMENT;
+  sd.texture_sampler_pairs[0].view_slot   = 0;
+  sd.texture_sampler_pairs[0].sampler_slot = 0;
+  sd.texture_sampler_pairs[0].glsl_name   = "u_tex";
   R.shader = sg_make_shader(&sd);
 
   // ----- Pipeline -----
@@ -244,16 +247,25 @@ void ui_init(const UIConfig &cfg) {
   R.pip = sg_make_pipeline(&pd);
 
   // ----- Buffers -----
+  
+  // vertex buffer
   sg_buffer_desc vd = {};
-  vd.size  = MAX_VERTS * sizeof(Vert);
-  vd.usage = SG_USAGE_STREAM;
-  R.vbuf = sg_make_buffer(&vd);
+  vd.size                   = MAX_VERTS * sizeof(Vert);
+  vd.usage.stream_update    = true;
+  vd.usage.vertex_buffer    = true;
 
+  // index buffer
   sg_buffer_desc id = {};
-  id.size  = MAX_INDICES * sizeof(uint16_t);
-  id.usage = SG_USAGE_STREAM;
-  id.type  = SG_BUFFERTYPE_INDEXBUFFER;
-  R.ibuf = sg_make_buffer(&id);
+  id.size                   = MAX_INDICES * sizeof(uint16_t);
+  id.usage.stream_update    = true;
+  id.usage.index_buffer     = true;
+
+  R.solid_vbuf = sg_make_buffer(&vd);
+  R.solid_ibuf = sg_make_buffer(&id);
+  R.icon_vbuf  = sg_make_buffer(&vd);
+  R.icon_ibuf  = sg_make_buffer(&id);
+  R.font_vbuf  = sg_make_buffer(&vd);
+  R.font_ibuf  = sg_make_buffer(&id);
 
   // ----- Textures -----
   R.white_tex = make_white_texture();
@@ -264,14 +276,36 @@ void ui_init(const UIConfig &cfg) {
   R.icons_cols = (iw > 0 && cfg.icon_size > 0) ? iw / cfg.icon_size : 1;
 
   load_font(cfg.font_path, cfg.font_size);
-}
+
+  // ----- Sampler -----
+  sg_sampler_desc smpd = {};
+  smpd.min_filter = SG_FILTER_NEAREST;
+  smpd.mag_filter = SG_FILTER_NEAREST;
+  R.nearest_sampler = sg_make_sampler(&smpd);
+
+  // ----- Views -----
+  sg_view_desc svd = {};
+  svd.texture.image = R.white_tex;
+  R.solid_view      = sg_make_view(&svd);
+  svd.texture.image = R.icons_tex.id ? R.icons_tex : R.white_tex;
+  R.icon_view       = sg_make_view(&svd);
+  svd.texture.image = R.font_tex.id  ? R.font_tex  : R.white_tex;
+  R.font_view       = sg_make_view(&svd);}
 
 void ui_shutdown() {
   sg_destroy_pipeline(R.pip);
   sg_destroy_shader(R.shader);
-  sg_destroy_buffer(R.vbuf);
-  sg_destroy_buffer(R.ibuf);
+  sg_destroy_buffer(R.solid_vbuf);
+  sg_destroy_buffer(R.solid_ibuf);
+  sg_destroy_buffer(R.icon_vbuf);
+  sg_destroy_buffer(R.icon_ibuf);
+  sg_destroy_buffer(R.font_vbuf);
+  sg_destroy_buffer(R.font_ibuf);
   sg_destroy_image(R.white_tex);
+  sg_destroy_sampler(R.nearest_sampler);
+  sg_destroy_view(R.solid_view);
+  sg_destroy_view(R.icon_view);
+  sg_destroy_view(R.font_view);
   if (R.icons_tex.id) sg_destroy_image(R.icons_tex);
   if (R.font_tex.id)  sg_destroy_image(R.font_tex);
 }
@@ -280,25 +314,23 @@ void ui_shutdown() {
 //  Low-level draw helpers
 // ============================================================
 
-static void flush_batch(Batch &batch, sg_image tex) {
+
+static void flush_batch(Batch &batch, sg_view view,
+                        sg_buffer vbuf, sg_buffer ibuf) {
   if (batch.verts.empty()) return;
 
-  sg_update_buffer(R.vbuf, {batch.verts.data(),   batch.verts.size()   * sizeof(Vert)});
-  sg_update_buffer(R.ibuf, {batch.indices.data(),  batch.indices.size() * sizeof(uint16_t)});
+  sg_update_buffer(vbuf, {batch.verts.data(),  batch.verts.size()  * sizeof(Vert)});
+  sg_update_buffer(ibuf, {batch.indices.data(), batch.indices.size() * sizeof(uint16_t)});
 
-  R.bindings.vertex_buffers[0] = R.vbuf;
-  R.bindings.index_buffer      = R.ibuf;
-  R.bindings.fs.images[0]      = tex;
-
-  sg_sampler_desc smpd = {};
-  smpd.min_filter = SG_FILTER_NEAREST;
-  smpd.mag_filter = SG_FILTER_NEAREST;
-  R.bindings.fs.samplers[0] = sg_make_sampler(&smpd);
+  R.bindings.vertex_buffers[0] = vbuf;
+  R.bindings.index_buffer      = ibuf;
+  R.bindings.views[0]          = view;
+  R.bindings.samplers[0]       = R.nearest_sampler;
 
   sg_apply_bindings(&R.bindings);
 
   float res[2] = { R.fb_w, R.fb_h };
-  sg_apply_uniforms(SG_SHADERSTAGE_VS, 0, SG_RANGE(res));
+  sg_apply_uniforms(0, SG_RANGE(res));
 
   sg_draw(0, (int)batch.indices.size(), 1);
   batch.clear();
@@ -752,9 +784,9 @@ void ui_draw(AppState *state,
   draw_popup(state, cfg, fb_width, fb_height);
 
   // Flush all batches in order: solid -> icons -> text
-  flush_batch(R.solid_batch, R.white_tex);
-  flush_batch(R.icon_batch,  R.icons_tex.id ? R.icons_tex : R.white_tex);
-  flush_batch(R.font_batch,  R.font_tex.id  ? R.font_tex  : R.white_tex);
+  flush_batch(R.solid_batch, R.solid_view, R.solid_vbuf, R.solid_ibuf);
+  flush_batch(R.icon_batch,  R.icon_view,  R.icon_vbuf,  R.icon_ibuf);
+  flush_batch(R.font_batch,  R.font_view,  R.font_vbuf,  R.font_ibuf);
 
   sg_end_pass();
   sg_commit();
