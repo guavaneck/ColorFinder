@@ -96,7 +96,7 @@ status_height = 20
 row_padding_x = 8
 row_padding_y = 3
 icon_label_gap = 6
-icons_sheet = assets/icons.png
+icons_sheet = icons.png
 icon_size = 16
 keybind_up = up
 keybind_down = down
@@ -124,15 +124,45 @@ UIConfig uiconfig_load() {
   UIConfig cfg;
   fs::path path = uiconfig_path();
 
+  // create config if missing
   if (!fs::exists(path)) {
     fs::create_directories(path.parent_path());
+
     std::ofstream out(path);
-    if (out) out << DEFAULT_UICONFIG;
-    else std::cerr << "Warning: could not create uiconfig at " << path << "\n";
-    return cfg; // return defaults
+    if (out) {
+      out << DEFAULT_UICONFIG;
+    } else {
+      std::cerr << "Warning: could not create uiconfig at " << path << "\n";
+    }
+  }
+  // ensure icons exist every run
+  try {
+    fs::path exe =
+      fs::read_symlink("/proc/self/exe");
+    fs::path bin_dir = exe.parent_path();
+    fs::path icons_src =
+      fs::weakly_canonical(
+          bin_dir / "../third_party/assets/icons.png"
+      );
+    fs::path icons_dst =
+      path.parent_path() / "icons.png";
+    if (!fs::exists(icons_dst) &&
+      fs::exists(icons_src)) {
+      fs::copy_file(
+          icons_src,
+          icons_dst,
+          fs::copy_options::skip_existing
+      );
+    }
+
+  }
+  catch (const fs::filesystem_error& e) {
+    std::cerr << "Icon copy failed: "
+              << e.what() << "\n";
   }
 
   auto map = load_raw(path);
+
   auto get = [&](const std::string &k, const std::string &fb) {
     return uiconfig_get(map, k, fb);
   };
@@ -175,7 +205,9 @@ UIConfig uiconfig_load() {
   cfg.row_padding_y       = getf("row_padding_y",       3.f);
   cfg.icon_label_gap      = getf("icon_label_gap",      6.f);
 
-  cfg.icons_sheet         = get("icons_sheet",  "assets/icons.png");
+  cfg.icons_sheet         = get("icons_sheet",  "icons.png");
+  if (!fs::path(cfg.icons_sheet).is_absolute())
+    cfg.icons_sheet = (path.parent_path() / cfg.icons_sheet).string();
   cfg.icon_size           = (int)getf("icon_size", 16.f);
 
   cfg.kb_up             = get("keybind_up",             "up");

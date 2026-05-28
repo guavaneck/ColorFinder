@@ -53,7 +53,11 @@ static int         s_icons_h    = 16;
 static void load_icons(const UIConfig &cfg) {
   int w = 0, h = 0, n = 0;
   unsigned char *data = stbi_load(cfg.icons_sheet.c_str(), &w, &h, &n, 4);
-  if (!data) return;
+  if (!data) {
+    fprintf(stderr, "icons: failed to load '%s'\n", cfg.icons_sheet.c_str());
+    return;
+  }
+  fprintf(stderr, "icons: loaded %dx%d from '%s'\n", w, h, cfg.icons_sheet.c_str());
 
   sg_image_desc d = {};
   d.width  = w;
@@ -61,6 +65,10 @@ static void load_icons(const UIConfig &cfg) {
   d.data.mip_levels[0] = { data, (size_t)(w * h * 4) };
   s_icons_tex = sg_make_image(&d);
   stbi_image_free(data);
+
+  sg_view_desc vd = {};
+  vd.texture.image = s_icons_tex;
+  s_icons_view = sg_make_view(&vd);
 
   sg_sampler_desc sd = {};
   sd.min_filter = SG_FILTER_NEAREST;

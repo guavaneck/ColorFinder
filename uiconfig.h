@@ -46,7 +46,7 @@ struct UIConfig {
   float icon_label_gap        = 6.f;
 
   // Sprites
-  std::string icons_sheet     = "third_party/assets/icons.png";
+  std::string icons_sheet     = "icons.png";
   int         icon_size       = 16;
 
   // Keybinds (raw strings from config, resolved at input time)
