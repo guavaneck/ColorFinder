@@ -25,6 +25,10 @@ static void init_cb() {
   auto cfg  = config_load();
   g_uicfg   = uiconfig_load();
   g_state   = app_state_new(std::move(cfg));
+  g_state->scroll_y = 0.0f;
+  g_state->scroll_target_y = 0.0f;
+  g_state->scroll_follow_selection = false;
+
   g_sidebar = sidebar_default_items();
 
   ui_init(g_uicfg);
@@ -36,10 +40,7 @@ static void frame_cb() {
 }
 
 static void event_cb(const sapp_event *e) {
-  if (e->type == SAPP_EVENTTYPE_KEY_DOWN)
-    ui_on_key(g_state, g_uicfg, e);
-  else
-    ui_handle_event(e);
+  ui_handle_event(e);
 }
 
 static void cleanup_cb() {

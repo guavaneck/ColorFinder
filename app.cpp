@@ -242,5 +242,8 @@ void select_move(AppState *state, int delta) {
     state->selected_index = delta > 0 ? 0 : n - 1;
   else
     state->selected_index = std::clamp(state->selected_index + delta, 0, n - 1);
+
+  state->selected_index = delta;
+  state->scroll_follow_selection = true;
   refresh_preview(state);
 }

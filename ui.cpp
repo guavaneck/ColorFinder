@@ -11,6 +11,7 @@
 #include <sokol_imgui.h>
 #include <imgui.h>
 #include <stb_image.h>
+#include <cmath>
 
 #include <cstring>
 #include <string>
@@ -18,6 +19,10 @@
 #include <filesystem>
 
 namespace fs = std::filesystem;
+
+// ----- input -----
+
+void ui_process_input(AppState *state, const UIConfig &cfg);
 
 // ----- color helpers -----
 
@@ -174,13 +179,37 @@ static void resolve_keys(const UIConfig &cfg) {
   g_keys.toggle_preview = parse_keybind(cfg.kb_toggle_preview);
 }
 
-static bool key_pressed(const KeySpec &ks) {
-  if (ks.key == ImGuiKey_None) return false;
+static bool key_pressed(const KeySpec &ks, bool repeat = false) {
+  if (ks.key == ImGuiKey_None)
+    return false;
+
   ImGuiIO &io = ImGui::GetIO();
-  return ImGui::IsKeyPressed(ks.key, true)
-      && io.KeyCtrl  == ks.ctrl
-      && io.KeyShift == ks.shift
-      && io.KeyAlt   == ks.alt;
+
+  if (!ImGui::IsKeyPressed(ks.key, repeat))
+    return false;
+
+  if (ks.ctrl && !io.KeyCtrl)
+    return false;
+
+  if (ks.shift && !io.KeyShift)
+    return false;
+
+  if (ks.alt && !io.KeyAlt)
+    return false;
+
+  return true;
+}
+
+static bool wants_keyboard_for_text_input(AppState *state) {
+  ImGuiIO &io = ImGui::GetIO();
+
+  if (state->path_editing)
+    return true;
+
+  if (state->popup.kind != PopupKind::None)
+    return true;
+
+  return io.WantTextInput;
 }
 
 // ----- ui_init / ui_shutdown -----
@@ -361,62 +390,83 @@ static void draw_file_list(AppState *state, const UIConfig &cfg,
 
   float icon_sz = (float)cfg.icon_size;
   float row_h   = cfg.row_height;
-  int   n       = (int)state->entries.size();
+  int n         = (int)state->entries.size();
 
   bool open_selected = false;
-  int new_selection = -1;
+  int new_selection   = -1;
+
   ImGuiListClipper clipper;
   clipper.Begin(n, row_h);
+  
   while (clipper.Step()) {
     for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
-      if (i < 0 || i >= (int)state->entries.size())
+      if (i < 0 || i >= n)
         continue;
+
       const FileEntry &fe = state->entries[i];
       bool sel = (state->selected_index == i);
 
       ImGui::PushID(i);
-      ImGui::PushStyleColor(ImGuiCol_Header,
-        sel ? to_imvec4(cfg.color_selection_bg) : to_imvec4(cfg.color_bg));
 
-      bool open_selected = false;
-      int new_selection = -1;
-      
-      if (ImGui::Selectable("##row", sel,
-                            ImGuiSelectableFlags_SpanAllColumns |
-                            ImGuiSelectableFlags_AllowOverlap,
-                            {list_w, row_h})) {
-        if (state->selected_index == i)
-          open_selected = true;
-        else
-          new_selection = i;
+      ImGui::PushStyleColor(ImGuiCol_Header,sel ? to_imvec4(cfg.color_selection_bg) : to_imvec4(cfg.color_bg));
+
+      if (ImGui::Selectable("##row", sel, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap, {list_w, row_h})) {
+        if (sel && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+          action_open_selected(state, state->cfg);
+        } 
+        else {
+          state->selected_index = i;
+          state->scroll_follow_selection = true;
+          refresh_preview(state);
+        }
       }
-      if (ImGui::IsItemHovered() && !sel)
-        ImGui::GetWindowDrawList()->AddRectFilled(
-          ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
-          to_imu32(cfg.color_hover_bg));
+
+      if (ImGui::IsItemHovered() && !sel) {
+        ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), to_imu32(cfg.color_hover_bg));
+      }
+
       ImGui::PopStyleColor();
 
       ImVec2 rmin = ImGui::GetItemRectMin();
       ImVec2 win  = ImGui::GetWindowPos();
-      ImGui::SetCursorPos({cfg.row_padding_x,
-                           rmin.y - win.y + ImGui::GetScrollY()
-                           + (row_h - icon_sz) * 0.5f});
+
+      ImGui::SetCursorPos({cfg.row_padding_x, rmin.y - win.y + ImGui::GetScrollY() + (row_h - icon_sz) * 0.5f});
+
       draw_icon_cell(icon_for_entry(fe, sel), icon_sz);
 
       ImGui::SameLine(0, cfg.icon_label_gap);
-      float avail = list_w - cfg.row_padding_x - icon_sz
-                           - cfg.icon_label_gap - 6.f - cfg.row_padding_x;
-      ImGui::SetCursorPosY(rmin.y - win.y + ImGui::GetScrollY()
-                           + (row_h - ImGui::GetFontSize()) * 0.5f);
-      ImGui::PushStyleColor(ImGuiCol_Text,
-        sel ? to_imvec4(cfg.color_text_selected) : to_imvec4(cfg.color_text));
+
+      float avail =
+        list_w
+        - cfg.row_padding_x
+        - icon_sz
+        - cfg.icon_label_gap
+        - 6.f
+        - cfg.row_padding_x;
+
+      ImGui::SetCursorPosY(rmin.y - win.y + ImGui::GetScrollY() + (row_h - ImGui::GetFontSize()) * 0.5f);
+
+      ImGui::PushStyleColor(ImGuiCol_Text, sel ? to_imvec4(cfg.color_text_selected) : to_imvec4(cfg.color_text));
+
       ImGui::TextUnformatted(truncate(fe.name, avail).c_str());
+
       ImGui::PopStyleColor();
 
       ImGui::PopID();
     }
-      }
+  }
   clipper.End();
+
+  if (state->scroll_to_selection && state->selected_index >= 0 && state->selected_index < n) {
+    float target_pos = state->selected_index * row_h;
+
+    ImGui::SetScrollFromPosY(target_pos - content_h * 0.5f);
+
+    state->scroll_to_selection = false;
+  }
+  // reset scroll request AFTER rendering
+  state->scroll_to_selection = false;
+
   if (new_selection >= 0) {
     state->selected_index = new_selection;
     refresh_preview(state);
@@ -427,20 +477,62 @@ static void draw_file_list(AppState *state, const UIConfig &cfg,
   }
 
   ImGui::EndChild();
+
+
+  // --------------------------------------
+  // Smooth scroll animation system
+  // --------------------------------------
+  
+  if (state->scroll_follow_selection &&
+      state->selected_index >= 0 &&
+      state->selected_index < n) {
+  
+    float target = state->selected_index * row_h;
+    float view_h = content_h;
+  
+    // center selected item
+    state->scroll_target_y = target - view_h * 0.5f;
+  }
+  
+  // current scroll position
+  float current = ImGui::GetScrollY();
+  float target   = state->scroll_target_y;
+  
+  // smoothing factor (higher = snappier)
+  float speed = 12.0f;
+  
+  // frame-rate independent lerp
+  float dt = ImGui::GetIO().DeltaTime;
+  float t  = 1.0f - expf(-speed * dt);
+  
+  current = current + (target - current) * t;
+  
+  // apply
+  ImGui::SetScrollY(current);
+  state->scroll_y = current;
+
   ImGui::PopStyleColor();
 }
 
 static void draw_preview(AppState *state, const UIConfig &cfg,
                          float pv_w, float content_h) {
   ImGui::PushStyleColor(ImGuiCol_ChildBg, to_imvec4(cfg.color_panel_bg));
-  ImGui::BeginChild("##preview", {pv_w, content_h}, false);
+
+  bool begin = ImGui::BeginChild("##preview", {pv_w, content_h}, false);
+
+  if (!begin) {
+    ImGui::PopStyleColor();
+    return;
+  }
 
   ImDrawList *dl = ImGui::GetWindowDrawList();
   ImVec2 wp = ImGui::GetWindowPos();
+
   dl->AddLine({wp.x, wp.y}, {wp.x, wp.y + content_h}, to_imu32(cfg.color_border));
 
-  if (state->selected_index < 0 ||
-      state->selected_index >= (int)state->entries.size()) {
+  bool valid_selection = state->selected_index >= 0 && state->selected_index < (int)state->entries.size();
+
+  if (!valid_selection) {
     ImGui::EndChild();
     ImGui::PopStyleColor();
     return;
@@ -623,6 +715,7 @@ void ui_draw(AppState *state,
              const std::vector<SidebarItem> &sidebar,
              float fb_width, float fb_height) {
   simgui_new_frame({ (int)fb_width, (int)fb_height, 1.0/60.0, 1.0f });
+  ui_process_input(state, cfg);
 
   ImGui::SetNextWindowPos({0, 0});
   ImGui::SetNextWindowSize({fb_width, fb_height});
@@ -684,50 +777,103 @@ void ui_handle_event(const sapp_event *e) {
   simgui_handle_event(e);
 }
 
-void ui_on_key(AppState *state, const UIConfig &cfg, const sapp_event *e) {
-  simgui_handle_event(e);
+void ui_process_input(AppState *state, const UIConfig &cfg) {
+  if (wants_keyboard_for_text_input(state))
+    return;
 
-  if (ImGui::GetIO().WantCaptureKeyboard) return;
-  if (state->path_editing) return;
+  // navigation (repeating)
 
-  if (key_pressed(g_keys.up)    || key_pressed(g_keys.up_alt))
-    { select_move(state, -1); return; }
-  if (key_pressed(g_keys.down)  || key_pressed(g_keys.down_alt))
-    { select_move(state, +1); return; }
-  if (key_pressed(g_keys.right) || key_pressed(g_keys.right_alt))
-    { navigate_into_selected(state); return; }
-  if (key_pressed(g_keys.left)  || key_pressed(g_keys.left_alt))
-    { navigate_up(state); return; }
-  if (key_pressed(g_keys.enter))
-    { action_open_selected(state, state->cfg); return; }
-  if (key_pressed(g_keys.back))
-    { navigate_up(state); return; }
-  if (key_pressed(g_keys.toggle_preview))
-    { state->preview_visible = !state->preview_visible; return; }
-
-  if (key_pressed(g_keys.del) && state->selected_index >= 0) {
-    state->popup.kind        = PopupKind::DeleteConfirm;
-    state->popup.target_name = state->entries[state->selected_index].name;
+  if (key_pressed(g_keys.up, true) ||
+      key_pressed(g_keys.up_alt, true)) {
+    select_move(state, -1);
     return;
   }
-  if (key_pressed(g_keys.rename) && state->selected_index >= 0) {
+
+  if (key_pressed(g_keys.down, true) ||
+      key_pressed(g_keys.down_alt, true)) {
+    select_move(state, +1);
+    return;
+  }
+
+  // navigation (single press)
+
+  if (key_pressed(g_keys.left, false) ||
+      key_pressed(g_keys.left_alt, false) ||
+      key_pressed(g_keys.back, false)) {
+    navigate_up(state);
+    return;
+  }
+
+  if (key_pressed(g_keys.right, false) ||
+      key_pressed(g_keys.right_alt, false) ||
+      key_pressed(g_keys.enter, false)) {
+    navigate_into_selected(state);
+    return;
+  }
+
+  // ui toggles
+
+  if (key_pressed(g_keys.toggle_preview, false)) {
+    state->preview_visible = !state->preview_visible;
+    return;
+  }
+
+  // delete
+
+  if (key_pressed(g_keys.del, false) &&
+      state->selected_index >= 0) {
+
+    state->popup.kind = PopupKind::DeleteConfirm;
+
+    state->popup.target_name =
+      state->entries[state->selected_index].name;
+
+    return;
+  }
+
+  // rename
+
+  if (key_pressed(g_keys.rename, false) &&
+      state->selected_index >= 0) {
+
     state->popup.kind = PopupKind::Rename;
-    std::strncpy(state->popup.input,
-                 state->entries[state->selected_index].name.c_str(),
-                 sizeof(state->popup.input) - 1);
-    state->popup.target_name = state->entries[state->selected_index].name;
-    return;
-  }
-  if (key_pressed(g_keys.new_file)) {
-    state->popup.kind = PopupKind::NewFile;
-    memset(state->popup.input, 0, sizeof(state->popup.input));
-    return;
-  }
-  if (key_pressed(g_keys.new_folder)) {
-    state->popup.kind = PopupKind::NewFolder;
-    memset(state->popup.input, 0, sizeof(state->popup.input));
+
+    std::strncpy(
+      state->popup.input,
+      state->entries[state->selected_index].name.c_str(),
+      sizeof(state->popup.input) - 1);
+
+    state->popup.target_name =
+      state->entries[state->selected_index].name;
+
     return;
   }
 
-  (void)cfg; // cfg no longer needed directly; keybinds resolved at init
+  // new file
+
+  if (key_pressed(g_keys.new_file, false)) {
+    state->popup.kind = PopupKind::NewFile;
+
+    memset(
+      state->popup.input,
+      0,
+      sizeof(state->popup.input));
+
+    return;
+  }
+
+  // new folder
+
+  if (key_pressed(g_keys.new_folder, false)) {
+    state->popup.kind = PopupKind::NewFolder;
+
+    memset(
+      state->popup.input,
+      0,
+      sizeof(state->popup.input));
+
+    return;
+  }
+
+  (void)cfg;
 }

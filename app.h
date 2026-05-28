@@ -92,6 +92,11 @@ struct AppState {
   char path_buf[1024] = {};
   bool path_editing   = false;
 
+  bool scroll_to_selection = false;
+  float scroll_y = 0.0f;
+  float scroll_target_y = 0.0f;
+  bool  scroll_follow_selection = false;
+
   std::string status_msg;
   PopupState  popup;
 
