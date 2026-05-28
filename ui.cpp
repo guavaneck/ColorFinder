@@ -1,5 +1,7 @@
 // ui.cpp
-// All rendering via Dear ImGui + sokol_imgui.h.
+// Rendering via Dear ImGui + sokol_imgui.h.
+// Architecture: Input -> Cmd -> apply_cmd() -> State -> Render
+// UI never mutates AppState directly.
 
 #include "ui.h"
 #include "app.h"
@@ -12,7 +14,6 @@
 #include <imgui.h>
 #include <stb_image.h>
 #include <cmath>
-
 #include <cstring>
 #include <string>
 #include <vector>
@@ -20,11 +21,32 @@
 
 namespace fs = std::filesystem;
 
-// ----- input -----
+// ============================================================
+// Command system
+// ============================================================
 
-void ui_process_input(AppState *state, const UIConfig &cfg);
+enum class CmdType {
+  None,
+  MoveUp,
+  MoveDown,
+  Open,
+  Back,
+  SelectIndex,
+  TogglePreview,
+  Delete,
+  Rename,
+  NewFile,
+  NewFolder,
+};
 
-// ----- color helpers -----
+struct Cmd {
+  CmdType type  = CmdType::None;
+  int     index = -1;
+};
+
+// ============================================================
+// Color helpers
+// ============================================================
 
 static ImVec4 to_imvec4(const Color &c) {
   return ImVec4(c.r/255.f, c.g/255.f, c.b/255.f, c.a/255.f);
@@ -34,7 +56,9 @@ static ImU32 to_imu32(const Color &c) {
   return IM_COL32(c.r, c.g, c.b, c.a);
 }
 
-// ----- truncate -----
+// ============================================================
+// Text truncation
+// ============================================================
 
 static std::string truncate(const std::string &s, float max_px) {
   if (ImGui::CalcTextSize(s.c_str()).x <= max_px) return s;
@@ -44,7 +68,9 @@ static std::string truncate(const std::string &s, float max_px) {
   return t + "...";
 }
 
-// ----- icon sprite sheet -----
+// ============================================================
+// Icon sprite sheet
+// ============================================================
 
 static sg_image    s_icons_tex  = {};
 static sg_view     s_icons_view = {};
@@ -101,8 +127,9 @@ static void draw_icon_cell(int cell_index, float size) {
   ImGui::Image(s_icons_id, {size, size}, uv0, uv1);
 }
 
-// ----- resolved keybinds -----
-// Parsed once at ui_init, checked each frame via ImGui::IsKeyPressed.
+// ============================================================
+// Keybind parsing
+// ============================================================
 
 struct KeySpec {
   bool     ctrl = false, shift = false, alt = false;
@@ -179,107 +206,131 @@ static void resolve_keys(const UIConfig &cfg) {
   g_keys.toggle_preview = parse_keybind(cfg.kb_toggle_preview);
 }
 
-static bool key_pressed(const KeySpec &ks, bool repeat = false) {
-  if (ks.key == ImGuiKey_None)
-    return false;
-
+// Check a resolved key, with optional repeat.
+static bool key(const KeySpec &k, bool repeat = false) {
+  if (k.key == ImGuiKey_None) return false;
   ImGuiIO &io = ImGui::GetIO();
-
-  if (!ImGui::IsKeyPressed(ks.key, repeat))
-    return false;
-
-  if (ks.ctrl && !io.KeyCtrl)
-    return false;
-
-  if (ks.shift && !io.KeyShift)
-    return false;
-
-  if (ks.alt && !io.KeyAlt)
-    return false;
-
+  if (!ImGui::IsKeyPressed(k.key, repeat)) return false;
+  if (k.ctrl  && !io.KeyCtrl)  return false;
+  if (k.shift && !io.KeyShift) return false;
+  if (k.alt   && !io.KeyAlt)   return false;
   return true;
 }
 
-static bool wants_keyboard_for_text_input(AppState *state) {
+// ============================================================
+// Input -> Cmd translator
+// ============================================================
+
+static Cmd collect_input(const AppState *state) {
   ImGuiIO &io = ImGui::GetIO();
 
-  if (state->path_editing)
-    return true;
+  // Block navigation while text input is active.
+  if (io.WantTextInput || state->path_editing || state->popup.kind != PopupKind::None)
+    return {};
 
-  if (state->popup.kind != PopupKind::None)
-    return true;
+  // ----- scroll = move selection -----
+  if (io.MouseWheel < 0) return {CmdType::MoveDown};
+  if (io.MouseWheel > 0) return {CmdType::MoveUp};
 
-  return io.WantTextInput;
-}
+  // ----- navigation (repeating) -----
+  if (key(g_keys.up,   true) || key(g_keys.up_alt,   true)) return {CmdType::MoveUp};
+  if (key(g_keys.down, true) || key(g_keys.down_alt, true)) return {CmdType::MoveDown};
 
-// ----- ui_init / ui_shutdown -----
+  // ----- navigation (single press) -----
+  if (key(g_keys.left,  false) || key(g_keys.left_alt,  false) || key(g_keys.back,  false)) return {CmdType::Back};
+  if (key(g_keys.right, false) || key(g_keys.right_alt, false) || key(g_keys.enter, false)) return {CmdType::Open};
 
-void ui_init(const UIConfig &cfg) {
-  simgui_desc_t d = {};
-  simgui_setup(&d);
+  // ----- actions -----
+  if (key(g_keys.toggle_preview, false)) return {CmdType::TogglePreview};
 
-  // ----- style -----
-  ImGuiStyle &st = ImGui::GetStyle();
-  st.WindowPadding     = {0, 0};
-  st.ItemSpacing       = {0, 0};
-  st.FramePadding      = {cfg.row_padding_x, cfg.row_padding_y};
-  st.ScrollbarSize     = 6.f;
-  st.WindowBorderSize  = 0.f;
-  st.ChildBorderSize   = 0.f;
-  st.PopupBorderSize   = 1.f;
-  st.WindowRounding    = 0.f;
-  st.ChildRounding     = 0.f;
-  st.FrameRounding     = 0.f;
-  st.PopupRounding     = 0.f;
-  st.ScrollbarRounding = 0.f;
+  if (key(g_keys.del,    false) && state->selected_index >= 0) return {CmdType::Delete};
+  if (key(g_keys.rename, false) && state->selected_index >= 0) return {CmdType::Rename};
+  if (key(g_keys.new_file,   false)) return {CmdType::NewFile};
+  if (key(g_keys.new_folder, false)) return {CmdType::NewFolder};
 
-  ImVec4 *c = st.Colors;
-  c[ImGuiCol_WindowBg]             = to_imvec4(cfg.color_bg);
-  c[ImGuiCol_ChildBg]              = to_imvec4(cfg.color_bg);
-  c[ImGuiCol_PopupBg]              = to_imvec4(cfg.color_panel_bg);
-  c[ImGuiCol_Border]               = to_imvec4(cfg.color_border);
-  c[ImGuiCol_FrameBg]              = to_imvec4(cfg.color_bg);
-  c[ImGuiCol_FrameBgHovered]       = to_imvec4(cfg.color_hover_bg);
-  c[ImGuiCol_FrameBgActive]        = to_imvec4(cfg.color_selection_bg);
-  c[ImGuiCol_TitleBg]              = to_imvec4(cfg.color_panel_bg);
-  c[ImGuiCol_TitleBgActive]        = to_imvec4(cfg.color_panel_bg);
-  c[ImGuiCol_ScrollbarBg]          = to_imvec4(cfg.color_scrollbar);
-  c[ImGuiCol_ScrollbarGrab]        = to_imvec4(cfg.color_scrollbar_fg);
-  c[ImGuiCol_ScrollbarGrabHovered] = to_imvec4(cfg.color_scrollbar_fg);
-  c[ImGuiCol_ScrollbarGrabActive]  = to_imvec4(cfg.color_text_dim);
-  c[ImGuiCol_Header]               = to_imvec4(cfg.color_selection_bg);
-  c[ImGuiCol_HeaderHovered]        = to_imvec4(cfg.color_hover_bg);
-  c[ImGuiCol_HeaderActive]         = to_imvec4(cfg.color_selection_bg);
-  c[ImGuiCol_Button]               = to_imvec4(cfg.color_bg);
-  c[ImGuiCol_ButtonHovered]        = to_imvec4(cfg.color_hover_bg);
-  c[ImGuiCol_ButtonActive]         = to_imvec4(cfg.color_selection_bg);
-  c[ImGuiCol_Text]                 = to_imvec4(cfg.color_text);
-  c[ImGuiCol_TextDisabled]         = to_imvec4(cfg.color_text_dim);
-  c[ImGuiCol_Separator]            = to_imvec4(cfg.color_border);
-  c[ImGuiCol_SeparatorHovered]     = to_imvec4(cfg.color_border);
-  c[ImGuiCol_SeparatorActive]      = to_imvec4(cfg.color_border);
-
-  // ----- font -----
-  if (!cfg.font_path.empty()) {
-    ImFontConfig fc;
-    fc.OversampleH = 2;
-    fc.OversampleV = 2;
-    ImGui::GetIO().Fonts->AddFontFromFileTTF(
-      cfg.font_path.c_str(), cfg.font_size, &fc);
-  }
-
-  load_icons(cfg);
-  resolve_keys(cfg);
-}
-
-void ui_shutdown() {
-  if (s_icons_tex.id) sg_destroy_image(s_icons_tex);
-  if (s_icons_smp.id) sg_destroy_sampler(s_icons_smp);
-  simgui_shutdown();
+  return {};
 }
 
 // ============================================================
-//  Sub-panels
+// State machine - the only place AppState changes
+// ============================================================
+
+static void apply_cmd(AppState *state, const Cmd &cmd) {
+  switch (cmd.type) {
+    case CmdType::MoveUp:
+      select_move(state, -1);
+      break;
+
+    case CmdType::MoveDown:
+      select_move(state, +1);
+      break;
+
+    case CmdType::Open:
+      navigate_into_selected(state);
+      break;
+
+    case CmdType::Back:
+      navigate_up(state);
+      break;
+
+    case CmdType::SelectIndex:
+      if (cmd.index >= 0 && cmd.index < (int)state->entries.size()) {
+        state->selected_index = cmd.index;
+        refresh_preview(state);
+      }
+      break;
+
+    case CmdType::TogglePreview:
+      state->preview_visible = !state->preview_visible;
+      break;
+
+    case CmdType::Delete:
+      state->popup.kind        = PopupKind::DeleteConfirm;
+      state->popup.target_name = state->entries[state->selected_index].name;
+      break;
+
+    case CmdType::Rename:
+      state->popup.kind = PopupKind::Rename;
+      std::strncpy(state->popup.input,
+                   state->entries[state->selected_index].name.c_str(),
+                   sizeof(state->popup.input) - 1);
+      state->popup.target_name = state->entries[state->selected_index].name;
+      break;
+
+    case CmdType::NewFile:
+      state->popup.kind = PopupKind::NewFile;
+      memset(state->popup.input, 0, sizeof(state->popup.input));
+      break;
+
+    case CmdType::NewFolder:
+      state->popup.kind = PopupKind::NewFolder;
+      memset(state->popup.input, 0, sizeof(state->popup.input));
+      break;
+
+    default:
+      break;
+  }
+}
+
+// ============================================================
+// Scroll system - centered on selected item, lerp smoothed
+// ============================================================
+
+static void update_scroll(AppState *state, float content_h, float row_h) {
+  if (state->selected_index < 0) return;
+
+  float target  = state->selected_index * row_h - content_h * 0.5f;
+  float current = ImGui::GetScrollY();
+
+  float speed = 14.0f;
+  float dt    = ImGui::GetIO().DeltaTime;
+  float t     = 1.0f - expf(-speed * dt);
+
+  ImGui::SetScrollY(current + (target - current) * t);
+}
+
+// ============================================================
+// Sub-panels
 // ============================================================
 
 static void draw_pathbar(AppState *state, const UIConfig &cfg,
@@ -390,66 +441,65 @@ static void draw_file_list(AppState *state, const UIConfig &cfg,
 
   float icon_sz = (float)cfg.icon_size;
   float row_h   = cfg.row_height;
-  int n         = (int)state->entries.size();
-
-  bool open_selected = false;
-  int new_selection   = -1;
+  int   n       = (int)state->entries.size();
 
   ImGuiListClipper clipper;
   clipper.Begin(n, row_h);
-  
   while (clipper.Step()) {
     for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
-      if (i < 0 || i >= n)
-        continue;
+      if (i < 0 || i >= n) continue;
 
       const FileEntry &fe = state->entries[i];
       bool sel = (state->selected_index == i);
 
       ImGui::PushID(i);
 
-      ImGui::PushStyleColor(ImGuiCol_Header,sel ? to_imvec4(cfg.color_selection_bg) : to_imvec4(cfg.color_bg));
+      // ----- highlight (render only, no state) -----
+      ImGui::PushStyleColor(ImGuiCol_Header,
+        sel ? to_imvec4(cfg.color_selection_bg) : to_imvec4(cfg.color_bg));
 
-      if (ImGui::Selectable("##row", sel, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap, {list_w, row_h})) {
-        if (sel && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-          action_open_selected(state, state->cfg);
-        } 
-        else {
-          state->selected_index = i;
-          state->scroll_follow_selection = true;
-          refresh_preview(state);
-        }
-      }
+      ImGui::Selectable("##row", sel,
+        ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap,
+        {list_w, row_h});
 
-      if (ImGui::IsItemHovered() && !sel) {
-        ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), to_imu32(cfg.color_hover_bg));
-      }
+      bool hovered = ImGui::IsItemHovered();
+
+      // ----- mouse -> commands only -----
+      if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        apply_cmd(state, {CmdType::SelectIndex, i});
+
+      if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+        apply_cmd(state, {CmdType::Open});
+
+      if (hovered && !sel)
+        ImGui::GetWindowDrawList()->AddRectFilled(
+          ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+          to_imu32(cfg.color_hover_bg));
 
       ImGui::PopStyleColor();
 
+      // ----- icon -----
       ImVec2 rmin = ImGui::GetItemRectMin();
       ImVec2 win  = ImGui::GetWindowPos();
-
-      ImGui::SetCursorPos({cfg.row_padding_x, rmin.y - win.y + ImGui::GetScrollY() + (row_h - icon_sz) * 0.5f});
-
+      ImGui::SetCursorPos({
+        cfg.row_padding_x,
+        rmin.y - win.y + ImGui::GetScrollY() + (row_h - icon_sz) * 0.5f
+      });
       draw_icon_cell(icon_for_entry(fe, sel), icon_sz);
 
+      // ----- label -----
       ImGui::SameLine(0, cfg.icon_label_gap);
-
-      float avail =
-        list_w
+      float avail = list_w
         - cfg.row_padding_x
         - icon_sz
         - cfg.icon_label_gap
         - 6.f
         - cfg.row_padding_x;
-
-      ImGui::SetCursorPosY(rmin.y - win.y + ImGui::GetScrollY() + (row_h - ImGui::GetFontSize()) * 0.5f);
-
-      ImGui::PushStyleColor(ImGuiCol_Text, sel ? to_imvec4(cfg.color_text_selected) : to_imvec4(cfg.color_text));
-
+      ImGui::SetCursorPosY(
+        rmin.y - win.y + ImGui::GetScrollY() + (row_h - ImGui::GetFontSize()) * 0.5f);
+      ImGui::PushStyleColor(ImGuiCol_Text,
+        sel ? to_imvec4(cfg.color_text_selected) : to_imvec4(cfg.color_text));
       ImGui::TextUnformatted(truncate(fe.name, avail).c_str());
-
       ImGui::PopStyleColor();
 
       ImGui::PopID();
@@ -457,60 +507,10 @@ static void draw_file_list(AppState *state, const UIConfig &cfg,
   }
   clipper.End();
 
-  if (state->scroll_to_selection && state->selected_index >= 0 && state->selected_index < n) {
-    float target_pos = state->selected_index * row_h;
-
-    ImGui::SetScrollFromPosY(target_pos - content_h * 0.5f);
-
-    state->scroll_to_selection = false;
-  }
-  // reset scroll request AFTER rendering
-  state->scroll_to_selection = false;
-
-  if (new_selection >= 0) {
-    state->selected_index = new_selection;
-    refresh_preview(state);
-  }
-
-  if (open_selected) {
-    action_open_selected(state, state->cfg);
-  }
+  // ----- scroll - keep selection centered -----
+  update_scroll(state, content_h, row_h);
 
   ImGui::EndChild();
-
-
-  // --------------------------------------
-  // Smooth scroll animation system
-  // --------------------------------------
-  
-  if (state->scroll_follow_selection &&
-      state->selected_index >= 0 &&
-      state->selected_index < n) {
-  
-    float target = state->selected_index * row_h;
-    float view_h = content_h;
-  
-    // center selected item
-    state->scroll_target_y = target - view_h * 0.5f;
-  }
-  
-  // current scroll position
-  float current = ImGui::GetScrollY();
-  float target   = state->scroll_target_y;
-  
-  // smoothing factor (higher = snappier)
-  float speed = 12.0f;
-  
-  // frame-rate independent lerp
-  float dt = ImGui::GetIO().DeltaTime;
-  float t  = 1.0f - expf(-speed * dt);
-  
-  current = current + (target - current) * t;
-  
-  // apply
-  ImGui::SetScrollY(current);
-  state->scroll_y = current;
-
   ImGui::PopStyleColor();
 }
 
@@ -518,21 +518,19 @@ static void draw_preview(AppState *state, const UIConfig &cfg,
                          float pv_w, float content_h) {
   ImGui::PushStyleColor(ImGuiCol_ChildBg, to_imvec4(cfg.color_panel_bg));
 
-  bool begin = ImGui::BeginChild("##preview", {pv_w, content_h}, false);
-
-  if (!begin) {
+  if (!ImGui::BeginChild("##preview", {pv_w, content_h}, false)) {
+    ImGui::EndChild();
     ImGui::PopStyleColor();
     return;
   }
 
   ImDrawList *dl = ImGui::GetWindowDrawList();
   ImVec2 wp = ImGui::GetWindowPos();
-
   dl->AddLine({wp.x, wp.y}, {wp.x, wp.y + content_h}, to_imu32(cfg.color_border));
 
-  bool valid_selection = state->selected_index >= 0 && state->selected_index < (int)state->entries.size();
-
-  if (!valid_selection) {
+  bool valid = state->selected_index >= 0 &&
+               state->selected_index < (int)state->entries.size();
+  if (!valid) {
     ImGui::EndChild();
     ImGui::PopStyleColor();
     return;
@@ -542,12 +540,13 @@ static void draw_preview(AppState *state, const UIConfig &cfg,
   float px    = cfg.row_padding_x + 1.f;
   float row_h = cfg.row_height;
 
+  // ----- name -----
   ImGui::SetCursorPos({px, (row_h - ImGui::GetFontSize()) * 0.5f});
   ImGui::PushStyleColor(ImGuiCol_Text, to_imvec4(cfg.color_text));
   ImGui::TextUnformatted(truncate(fe.name, pv_w - px * 2).c_str());
   ImGui::PopStyleColor();
 
-  dl->AddLine({wp.x + px,       wp.y + row_h},
+  dl->AddLine({wp.x + px,        wp.y + row_h},
               {wp.x + pv_w - px, wp.y + row_h},
               to_imu32(cfg.color_border));
 
@@ -569,14 +568,11 @@ static void draw_preview(AppState *state, const UIConfig &cfg,
       ImGui::TextUnformatted(truncate(pfe.name, avail).c_str());
       ImGui::PopStyleColor();
       ImGui::EndGroup();
-      ImGui::Dummy(ImVec2(0.0f, row_h - ImGui::GetItemRectSize().y));
+      ImGui::Dummy(ImVec2(0.f, row_h - ImGui::GetItemRectSize().y));
       ImGui::PopID();
     }
-
     ImGui::EndChild();
-  }
-
-  else {
+  } else {
     std::string size_str;
     if (fe.size < 1024)
       size_str = std::to_string(fe.size) + " B";
@@ -686,9 +682,9 @@ static void draw_popup(AppState *state, const UIConfig &cfg) {
 
     if (confirmed) {
       switch (state->popup.kind) {
-        case PopupKind::NewFile:       action_create_file(state, state->popup.input);   break;
+        case PopupKind::NewFile:       action_create_file(state,   state->popup.input); break;
         case PopupKind::NewFolder:     action_create_folder(state, state->popup.input); break;
-        case PopupKind::Rename:        action_rename(state, state->popup.input);        break;
+        case PopupKind::Rename:        action_rename(state,        state->popup.input); break;
         case PopupKind::DeleteConfirm: action_delete_selected(state);                   break;
         default: break;
       }
@@ -707,7 +703,75 @@ static void draw_popup(AppState *state, const UIConfig &cfg) {
 }
 
 // ============================================================
-//  ui_draw
+// ui_init / ui_shutdown
+// ============================================================
+
+void ui_init(const UIConfig &cfg) {
+  simgui_desc_t d = {};
+  simgui_setup(&d);
+
+  // ----- style -----
+  ImGuiStyle &st = ImGui::GetStyle();
+  st.WindowPadding     = {0, 0};
+  st.ItemSpacing       = {0, 0};
+  st.FramePadding      = {cfg.row_padding_x, cfg.row_padding_y};
+  st.ScrollbarSize     = 6.f;
+  st.WindowBorderSize  = 0.f;
+  st.ChildBorderSize   = 0.f;
+  st.PopupBorderSize   = 1.f;
+  st.WindowRounding    = 0.f;
+  st.ChildRounding     = 0.f;
+  st.FrameRounding     = 0.f;
+  st.PopupRounding     = 0.f;
+  st.ScrollbarRounding = 0.f;
+
+  ImVec4 *c = st.Colors;
+  c[ImGuiCol_WindowBg]             = to_imvec4(cfg.color_bg);
+  c[ImGuiCol_ChildBg]              = to_imvec4(cfg.color_bg);
+  c[ImGuiCol_PopupBg]              = to_imvec4(cfg.color_panel_bg);
+  c[ImGuiCol_Border]               = to_imvec4(cfg.color_border);
+  c[ImGuiCol_FrameBg]              = to_imvec4(cfg.color_bg);
+  c[ImGuiCol_FrameBgHovered]       = to_imvec4(cfg.color_hover_bg);
+  c[ImGuiCol_FrameBgActive]        = to_imvec4(cfg.color_selection_bg);
+  c[ImGuiCol_TitleBg]              = to_imvec4(cfg.color_panel_bg);
+  c[ImGuiCol_TitleBgActive]        = to_imvec4(cfg.color_panel_bg);
+  c[ImGuiCol_ScrollbarBg]          = to_imvec4(cfg.color_scrollbar);
+  c[ImGuiCol_ScrollbarGrab]        = to_imvec4(cfg.color_scrollbar_fg);
+  c[ImGuiCol_ScrollbarGrabHovered] = to_imvec4(cfg.color_scrollbar_fg);
+  c[ImGuiCol_ScrollbarGrabActive]  = to_imvec4(cfg.color_text_dim);
+  c[ImGuiCol_Header]               = to_imvec4(cfg.color_selection_bg);
+  c[ImGuiCol_HeaderHovered]        = to_imvec4(cfg.color_hover_bg);
+  c[ImGuiCol_HeaderActive]         = to_imvec4(cfg.color_selection_bg);
+  c[ImGuiCol_Button]               = to_imvec4(cfg.color_bg);
+  c[ImGuiCol_ButtonHovered]        = to_imvec4(cfg.color_hover_bg);
+  c[ImGuiCol_ButtonActive]         = to_imvec4(cfg.color_selection_bg);
+  c[ImGuiCol_Text]                 = to_imvec4(cfg.color_text);
+  c[ImGuiCol_TextDisabled]         = to_imvec4(cfg.color_text_dim);
+  c[ImGuiCol_Separator]            = to_imvec4(cfg.color_border);
+  c[ImGuiCol_SeparatorHovered]     = to_imvec4(cfg.color_border);
+  c[ImGuiCol_SeparatorActive]      = to_imvec4(cfg.color_border);
+
+  // ----- font -----
+  if (!cfg.font_path.empty()) {
+    ImFontConfig fc;
+    fc.OversampleH = 2;
+    fc.OversampleV = 2;
+    ImGui::GetIO().Fonts->AddFontFromFileTTF(
+      cfg.font_path.c_str(), cfg.font_size, &fc);
+  }
+
+  load_icons(cfg);
+  resolve_keys(cfg);
+}
+
+void ui_shutdown() {
+  if (s_icons_tex.id) sg_destroy_image(s_icons_tex);
+  if (s_icons_smp.id) sg_destroy_sampler(s_icons_smp);
+  simgui_shutdown();
+}
+
+// ============================================================
+// ui_draw
 // ============================================================
 
 void ui_draw(AppState *state,
@@ -715,16 +779,20 @@ void ui_draw(AppState *state,
              const std::vector<SidebarItem> &sidebar,
              float fb_width, float fb_height) {
   simgui_new_frame({ (int)fb_width, (int)fb_height, 1.0/60.0, 1.0f });
-  ui_process_input(state, cfg);
+
+  // ----- collect input, apply commands -----
+  Cmd cmd = collect_input(state);
+  if (cmd.type != CmdType::None)
+    apply_cmd(state, cmd);
 
   ImGui::SetNextWindowPos({0, 0});
   ImGui::SetNextWindowSize({fb_width, fb_height});
   ImGui::Begin("##root", nullptr,
-               ImGuiWindowFlags_NoTitleBar     |
-               ImGuiWindowFlags_NoResize       |
-               ImGuiWindowFlags_NoMove         |
-               ImGuiWindowFlags_NoScrollbar    |
-               ImGuiWindowFlags_NoSavedSettings|
+               ImGuiWindowFlags_NoTitleBar      |
+               ImGuiWindowFlags_NoResize        |
+               ImGuiWindowFlags_NoMove          |
+               ImGuiWindowFlags_NoScrollbar     |
+               ImGuiWindowFlags_NoSavedSettings |
                ImGuiWindowFlags_NoBringToFrontOnFocus);
 
   if (fb_width < cfg.min_width_warning) {
@@ -770,110 +838,9 @@ void ui_draw(AppState *state,
 }
 
 // ============================================================
-//  Input
+// Event forwarding
 // ============================================================
 
 void ui_handle_event(const sapp_event *e) {
   simgui_handle_event(e);
-}
-
-void ui_process_input(AppState *state, const UIConfig &cfg) {
-  if (wants_keyboard_for_text_input(state))
-    return;
-
-  // navigation (repeating)
-
-  if (key_pressed(g_keys.up, true) ||
-      key_pressed(g_keys.up_alt, true)) {
-    select_move(state, -1);
-    return;
-  }
-
-  if (key_pressed(g_keys.down, true) ||
-      key_pressed(g_keys.down_alt, true)) {
-    select_move(state, +1);
-    return;
-  }
-
-  // navigation (single press)
-
-  if (key_pressed(g_keys.left, false) ||
-      key_pressed(g_keys.left_alt, false) ||
-      key_pressed(g_keys.back, false)) {
-    navigate_up(state);
-    return;
-  }
-
-  if (key_pressed(g_keys.right, false) ||
-      key_pressed(g_keys.right_alt, false) ||
-      key_pressed(g_keys.enter, false)) {
-    navigate_into_selected(state);
-    return;
-  }
-
-  // ui toggles
-
-  if (key_pressed(g_keys.toggle_preview, false)) {
-    state->preview_visible = !state->preview_visible;
-    return;
-  }
-
-  // delete
-
-  if (key_pressed(g_keys.del, false) &&
-      state->selected_index >= 0) {
-
-    state->popup.kind = PopupKind::DeleteConfirm;
-
-    state->popup.target_name =
-      state->entries[state->selected_index].name;
-
-    return;
-  }
-
-  // rename
-
-  if (key_pressed(g_keys.rename, false) &&
-      state->selected_index >= 0) {
-
-    state->popup.kind = PopupKind::Rename;
-
-    std::strncpy(
-      state->popup.input,
-      state->entries[state->selected_index].name.c_str(),
-      sizeof(state->popup.input) - 1);
-
-    state->popup.target_name =
-      state->entries[state->selected_index].name;
-
-    return;
-  }
-
-  // new file
-
-  if (key_pressed(g_keys.new_file, false)) {
-    state->popup.kind = PopupKind::NewFile;
-
-    memset(
-      state->popup.input,
-      0,
-      sizeof(state->popup.input));
-
-    return;
-  }
-
-  // new folder
-
-  if (key_pressed(g_keys.new_folder, false)) {
-    state->popup.kind = PopupKind::NewFolder;
-
-    memset(
-      state->popup.input,
-      0,
-      sizeof(state->popup.input));
-
-    return;
-  }
-
-  (void)cfg;
 }

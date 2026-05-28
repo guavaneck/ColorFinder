@@ -22,13 +22,9 @@ static void init_cb() {
   desc.logger.func = slog_func;
   sg_setup(&desc);
 
-  auto cfg  = config_load();
-  g_uicfg   = uiconfig_load();
-  g_state   = app_state_new(std::move(cfg));
-  g_state->scroll_y = 0.0f;
-  g_state->scroll_target_y = 0.0f;
-  g_state->scroll_follow_selection = false;
-
+  auto cfg = config_load();
+  g_uicfg  = uiconfig_load();
+  g_state  = app_state_new(std::move(cfg));
   g_sidebar = sidebar_default_items();
 
   ui_init(g_uicfg);

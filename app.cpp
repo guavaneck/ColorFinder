@@ -78,8 +78,8 @@ static void sort_entries(std::vector<FileEntry> &entries) {
 // ----- lifecycle -----
 
 AppState *app_state_new(std::unordered_map<std::string, std::string> cfg) {
-  AppState *s     = new AppState();
-  s->cfg          = std::move(cfg);
+  AppState *s = new AppState();
+  s->cfg      = std::move(cfg);
   s->current_path = fs::current_path();
   refresh_entries(s);
   return s;
@@ -93,7 +93,6 @@ void refresh_entries(AppState *state) {
   state->entries.clear();
   state->selected_index = -1;
   state->hovered_index  = -1;
-  state->scroll_offset  = 0.f;
 
   std::error_code ec;
   for (const auto &e : fs::directory_iterator(state->current_path, ec)) {
@@ -116,7 +115,6 @@ void refresh_entries(AppState *state) {
     : state->current_path.string();
 
   state->preview_entries.clear();
-  state->preview_scroll_offset = 0.f;
 }
 
 void navigate_to(AppState *state, const fs::path &path) {
@@ -151,7 +149,6 @@ void navigate_into_selected(AppState *state) {
 
 void refresh_preview(AppState *state) {
   state->preview_entries.clear();
-  state->preview_scroll_offset = 0.f;
 
   if (state->selected_index < 0 ||
       state->selected_index >= (int)state->entries.size()) return;
@@ -174,7 +171,7 @@ void refresh_preview(AppState *state) {
 // ----- actions -----
 
 void action_open_selected(AppState *state,
-                          const std::unordered_map<std::string,std::string> &cfg) {
+                          const std::unordered_map<std::string, std::string> &cfg) {
   if (state->selected_index < 0 ||
       state->selected_index >= (int)state->entries.size()) return;
 
@@ -242,8 +239,5 @@ void select_move(AppState *state, int delta) {
     state->selected_index = delta > 0 ? 0 : n - 1;
   else
     state->selected_index = std::clamp(state->selected_index + delta, 0, n - 1);
-
-  state->selected_index = delta;
-  state->scroll_follow_selection = true;
   refresh_preview(state);
 }

@@ -6,41 +6,41 @@
 
 // ----- icon index constants (must match icons.png layout) -----
 // Row 0
-static constexpr int ICON_FOLDER          = 0;
-static constexpr int ICON_FOLDER_SEL      = 1;
-static constexpr int ICON_FOLDER_DL       = 2;
-static constexpr int ICON_FOLDER_DL_SEL   = 3;
-static constexpr int ICON_FOLDER_PIC      = 4;
-static constexpr int ICON_FOLDER_PIC_SEL  = 5;
-static constexpr int ICON_FOLDER_MUSIC    = 6;
-static constexpr int ICON_FOLDER_MUSIC_SEL= 7;
-static constexpr int ICON_FOLDER_DOCS     = 8;
-static constexpr int ICON_FOLDER_DOCS_SEL = 9;
+static constexpr int ICON_FOLDER           = 0;
+static constexpr int ICON_FOLDER_SEL       = 1;
+static constexpr int ICON_FOLDER_DL        = 2;
+static constexpr int ICON_FOLDER_DL_SEL    = 3;
+static constexpr int ICON_FOLDER_PIC       = 4;
+static constexpr int ICON_FOLDER_PIC_SEL   = 5;
+static constexpr int ICON_FOLDER_MUSIC     = 6;
+static constexpr int ICON_FOLDER_MUSIC_SEL = 7;
+static constexpr int ICON_FOLDER_DOCS      = 8;
+static constexpr int ICON_FOLDER_DOCS_SEL  = 9;
 // Row 1
-static constexpr int ICON_FOLDER_DESK     = 10;
-static constexpr int ICON_FOLDER_DESK_SEL = 11;
-static constexpr int ICON_FOLDER_VID      = 12;
-static constexpr int ICON_FOLDER_VID_SEL  = 13;
-static constexpr int ICON_FOLDER_HOME     = 14;
-static constexpr int ICON_FOLDER_HOME_SEL = 15;
-static constexpr int ICON_FILE            = 16;
-static constexpr int ICON_FILE_SEL        = 17;
-static constexpr int ICON_FILE_IMAGE      = 18;
-static constexpr int ICON_FILE_IMAGE_SEL  = 19;
+static constexpr int ICON_FOLDER_DESK      = 10;
+static constexpr int ICON_FOLDER_DESK_SEL  = 11;
+static constexpr int ICON_FOLDER_VID       = 12;
+static constexpr int ICON_FOLDER_VID_SEL   = 13;
+static constexpr int ICON_FOLDER_HOME      = 14;
+static constexpr int ICON_FOLDER_HOME_SEL  = 15;
+static constexpr int ICON_FILE             = 16;
+static constexpr int ICON_FILE_SEL         = 17;
+static constexpr int ICON_FILE_IMAGE       = 18;
+static constexpr int ICON_FILE_IMAGE_SEL   = 19;
 // Row 2
-static constexpr int ICON_FILE_AUDIO      = 20;
-static constexpr int ICON_FILE_AUDIO_SEL  = 21;
-static constexpr int ICON_FILE_VIDEO      = 22;
-static constexpr int ICON_FILE_VIDEO_SEL  = 23;
-static constexpr int ICON_FILE_TEXT       = 24;
-static constexpr int ICON_FILE_TEXT_SEL   = 25;
-static constexpr int ICON_FILE_CODE       = 26;
-static constexpr int ICON_FILE_CODE_SEL   = 27;
-static constexpr int ICON_FILE_ARCHIVE    = 28;
-static constexpr int ICON_FILE_ARCHIVE_SEL= 29;
+static constexpr int ICON_FILE_AUDIO       = 20;
+static constexpr int ICON_FILE_AUDIO_SEL   = 21;
+static constexpr int ICON_FILE_VIDEO       = 22;
+static constexpr int ICON_FILE_VIDEO_SEL   = 23;
+static constexpr int ICON_FILE_TEXT        = 24;
+static constexpr int ICON_FILE_TEXT_SEL    = 25;
+static constexpr int ICON_FILE_CODE        = 26;
+static constexpr int ICON_FILE_CODE_SEL    = 27;
+static constexpr int ICON_FILE_ARCHIVE     = 28;
+static constexpr int ICON_FILE_ARCHIVE_SEL = 29;
 // Row 3
-static constexpr int ICON_FILE_PDF        = 30;
-static constexpr int ICON_FILE_PDF_SEL    = 31;
+static constexpr int ICON_FILE_PDF         = 30;
+static constexpr int ICON_FILE_PDF_SEL     = 31;
 
 // ----- file entry -----
 
@@ -77,25 +77,17 @@ struct AppState {
   std::filesystem::path  current_path;
   std::vector<FileEntry> entries;
 
-  int selected_index  = -1;
-  int hovered_index   = -1;
-  int sidebar_hover   = -1;
-  int sidebar_select  = -1;
+  int selected_index = -1;
+  int hovered_index  = -1;
+  int sidebar_hover  = -1;
+  int sidebar_select = -1;
 
   FocusPanel focus = FocusPanel::Main;
-
-  float scroll_offset         = 0.f;
-  float preview_scroll_offset = 0.f;
 
   std::vector<FileEntry> preview_entries;
 
   char path_buf[1024] = {};
   bool path_editing   = false;
-
-  bool scroll_to_selection = false;
-  float scroll_y = 0.0f;
-  float scroll_target_y = 0.0f;
-  bool  scroll_follow_selection = false;
 
   std::string status_msg;
   PopupState  popup;
@@ -117,7 +109,6 @@ std::vector<SidebarItem> sidebar_default_items();
 
 // ----- icon selection -----
 
-// Maps a FileEntry to the correct sprite sheet cell index.
 int icon_for_entry(const FileEntry &fe, bool selected);
 
 // ----- lifecycle -----
@@ -139,7 +130,7 @@ void refresh_preview(AppState *state);
 // ----- actions -----
 
 void action_open_selected(AppState *state,
-                          const std::unordered_map<std::string,std::string> &cfg);
+                          const std::unordered_map<std::string, std::string> &cfg);
 void action_delete_selected(AppState *state);
 void action_create_file(AppState *state, const std::string &name);
 void action_create_folder(AppState *state, const std::string &name);
