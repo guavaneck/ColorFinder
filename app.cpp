@@ -91,17 +91,20 @@ static void sort_entries(std::vector<FileEntry> &entries) {
 }
 
 void search_filter(AppState *state) {
-  state->filtered_entries.clear();
   if (!state->search_active || state->search_buf[0] == '\0') return;
 
   std::string needle = state->search_buf;
   for (auto &ch : needle) ch = (char)std::tolower((unsigned char)ch);
 
-  for (const auto &fe : state->entries) {
-    std::string name = fe.name;
+  for (int i = 0; i < (int)state->entries.size(); i++) {
+    std::string name = state->entries[i].name;
     for (auto &ch : name) ch = (char)std::tolower((unsigned char)ch);
-    if (name.find(needle) != std::string::npos)
-      state->filtered_entries.push_back(fe);
+    if (name.find(needle) != std::string::npos) {
+      state->selected_index = i;
+      state->selected_indices = { i };
+      refresh_preview(state);
+      return;
+    }
   }
 }
 
@@ -156,12 +159,11 @@ void selection_all(AppState *state) {
 void select_move(AppState *state, int delta) {
   if (state->entries.empty()) return;
   int n = (int)state->entries.size();
-  int next;
   if (state->selected_index < 0)
-    next = delta > 0 ? 0 : n - 1;
+    state->selected_index = delta > 0 ? 0 : n - 1;
   else
-    next = std::clamp(state->selected_index + delta, 0, n - 1);
-  selection_set(state, next);
+    state->selected_index = std::clamp(state->selected_index + delta, 0, n - 1);
+  state->selected_indices = { state->selected_index };
   refresh_preview(state);
 }
 
@@ -260,9 +262,11 @@ void navigate_up(AppState *state) {
 
 void navigate_into_selected(AppState *state) {
   state->sidebar_select = -1;
+  const auto &list = (state->search_active && state->search_buf[0] != '\0')
+    ? state->filtered_entries : state->entries;
   if (state->selected_index < 0 ||
-      state->selected_index >= (int)state->entries.size()) return;
-  const FileEntry &fe = state->entries[state->selected_index];
+      state->selected_index >= (int)list.size()) return;
+  const FileEntry &fe = list[state->selected_index];
   if (fe.is_dir)
     navigate_to(state, state->current_path / fe.name);
 }

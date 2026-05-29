@@ -393,7 +393,6 @@ static void apply_cmd(AppState *state, const Cmd &cmd) {
       state->search_active = true;
       memset(state->search_buf, 0, sizeof(state->search_buf));
       state->filtered_entries.clear();
-      selection_clear(state);
       break;
 
     case CmdType::CloseSearch:
@@ -552,9 +551,7 @@ static void draw_file_list(AppState *state, const UIConfig &cfg,
   ImGui::BeginChild("##filelist", {list_w, content_h}, false,
                     ImGuiWindowFlags_NoScrollWithMouse);
 
-  const auto &visible = (state->search_active && state->search_buf[0] != '\0')
-    ? state->filtered_entries
-    : state->entries;
+  const auto &visible = state->entries;
 
   float icon_sz = (float)cfg.icon_size;
   float row_h   = cfg.row_height;
@@ -863,7 +860,6 @@ static void draw_search_bar(AppState *state, const UIConfig &cfg,
   ImGui::PopStyleColor(2);
 
   if (changed) {
-    state->selected_index = -1;
     search_filter(state);
   }
 
@@ -871,7 +867,6 @@ static void draw_search_bar(AppState *state, const UIConfig &cfg,
     state->search_active = false;
     memset(state->search_buf, 0, sizeof(state->search_buf));
     state->filtered_entries.clear();
-    state->selected_index = -1;
   }
 
   ImGui::EndChild();
