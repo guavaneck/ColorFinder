@@ -49,26 +49,28 @@ struct UIConfig {
   int         icon_size       = 16;
 
   // Keybinds (raw strings from config, resolved at input time)
-  std::string kb_up           = "up";
-  std::string kb_down         = "down";
-  std::string kb_left         = "left";
-  std::string kb_right        = "right";
-  std::string kb_up_alt       = "k";
-  std::string kb_down_alt     = "j";
-  std::string kb_left_alt     = "h";
-  std::string kb_right_alt    = "l";
-  std::string kb_enter        = "return";
-  std::string kb_back         = "backspace";
-  std::string kb_go_home      = "~";
-  std::string kb_delete       = "delete";
-  std::string kb_rename       = "f2";
-  std::string kb_new_file     = "ctrl+n";
-  std::string kb_new_folder   = "ctrl+shift+n";
-  std::string kb_copy         = "ctrl+c";
-  std::string kb_cut          = "ctrl+x";
-  std::string kb_paste        = "ctrl+v";
-  std::string kb_select_all   = "ctrl+a";
+  std::string kb_up             = "up";
+  std::string kb_down           = "down";
+  std::string kb_left           = "left";
+  std::string kb_right          = "right";
+  std::string kb_up_alt         = "k";
+  std::string kb_down_alt       = "j";
+  std::string kb_left_alt       = "h";
+  std::string kb_right_alt      = "l";
+  std::string kb_enter          = "return";
+  std::string kb_back           = "backspace";
+  std::string kb_go_home        = "~";
+  std::string kb_delete         = "delete";
+  std::string kb_rename         = "f2";
+  std::string kb_new_file       = "ctrl+n";
+  std::string kb_new_folder     = "ctrl+shift+n";
+  std::string kb_copy           = "ctrl+c";
+  std::string kb_cut            = "ctrl+x";
+  std::string kb_paste          = "ctrl+v";
+  std::string kb_select_all     = "ctrl+a";
   std::string kb_toggle_preview = "tab";
+  std::string kb_open_file      = "o";
+  std::string kb_open_search    = "ctrl+f";
 };
 
 // ----- Loader -----

@@ -37,6 +37,16 @@ enum class CmdType {
   Rename,
   NewFile,
   NewFolder,
+  OpenFile,
+  GoHome,
+  OpenSearch,
+  CloseSearch,
+  Copy,
+  Cut,
+  Paste,
+  SelectAll,
+  SelectToggle,
+  SelectRange,
 };
 
 struct Cmd {
@@ -185,6 +195,9 @@ struct ResolvedKeys {
   KeySpec del, rename;
   KeySpec new_file, new_folder;
   KeySpec toggle_preview;
+  KeySpec open_file;
+  KeySpec go_home;
+  KeySpec open_search;
 };
 
 static ResolvedKeys g_keys;
@@ -205,6 +218,9 @@ static void resolve_keys(const UIConfig &cfg) {
   g_keys.new_file       = parse_keybind(cfg.kb_new_file);
   g_keys.new_folder     = parse_keybind(cfg.kb_new_folder);
   g_keys.toggle_preview = parse_keybind(cfg.kb_toggle_preview);
+  g_keys.open_file = parse_keybind(cfg.kb_open_file);
+  g_keys.go_home = parse_keybind(cfg.kb_go_home);
+  g_keys.open_search = parse_keybind(cfg.kb_open_search);
 }
 
 // Check a resolved key, with optional repeat.
@@ -252,6 +268,12 @@ static Cmd collect_input(const AppState *state) {
   if (key(g_keys.rename, false) && state->selected_index >= 0) return {CmdType::Rename};
   if (key(g_keys.new_file,   false)) return {CmdType::NewFile};
   if (key(g_keys.new_folder, false)) return {CmdType::NewFolder};
+
+  if (key(g_keys.open_file, false) && state->selected_index >= 0) return {CmdType::OpenFile};
+
+  if (key(g_keys.go_home, false)) return {CmdType::GoHome};
+
+  if (key(g_keys.open_search, false)) return {CmdType::OpenSearch};
 
   return {};
 }
@@ -310,6 +332,30 @@ static void apply_cmd(AppState *state, const Cmd &cmd) {
     case CmdType::NewFolder:
       state->popup.kind = PopupKind::NewFolder;
       memset(state->popup.input, 0, sizeof(state->popup.input));
+      break;
+
+    case CmdType::OpenFile:
+      action_open_selected(state, state->cfg);
+      break;
+
+    case CmdType::GoHome: {
+      const char *home = std::getenv("HOME");
+      if (home) navigate_to(state, fs::path(home));
+      break;
+    }
+
+    case CmdType::OpenSearch:
+      state->search_active = true;
+      memset(state->search_buf, 0, sizeof(state->search_buf));
+      state->filtered_entries.clear();
+      state->selected_index = -1;
+      break;
+
+    case CmdType::CloseSearch:
+      state->search_active = false;
+      memset(state->search_buf, 0, sizeof(state->search_buf));
+      state->filtered_entries.clear();
+      state->selected_index = -1;
       break;
 
     default:
@@ -449,9 +495,13 @@ static void draw_file_list(AppState *state, const UIConfig &cfg,
   ImGui::BeginChild("##filelist", {list_w, content_h}, false,
                     ImGuiWindowFlags_NoScrollWithMouse);
 
+  const auto &visible = (state->search_active && state->search_buf[0] != '\0')
+    ? state->filtered_entries
+    : state->entries;
+
   float icon_sz = (float)cfg.icon_size;
   float row_h   = cfg.row_height;
-  int   n       = (int)state->entries.size();
+  int   n       = (int)visible.size();
 
   ImGuiListClipper clipper;
   clipper.Begin(n, row_h);
@@ -459,28 +509,36 @@ static void draw_file_list(AppState *state, const UIConfig &cfg,
     for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
       if (i < 0 || i >= n) continue;
 
-      const FileEntry &fe = state->entries[i];
+      const FileEntry &fe = visible[i];
       bool sel = (state->selected_index == i);
 
       ImGui::PushID(i);
+
+      ImGui::PushStyleColor(ImGuiCol_Header,        ImVec4(0,0,0,0));
+      ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0,0,0,0));
+      ImGui::PushStyleColor(ImGuiCol_HeaderActive,  ImVec4(0,0,0,0));
 
       ImGui::Selectable("##row", sel,
         ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap,
         {list_w, row_h});
 
       bool hovered = ImGui::IsItemHovered();
+      ImGui::PopStyleColor(3);
 
       if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
         apply_cmd(state, {CmdType::SelectIndex, i});
       if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
         apply_cmd(state, {CmdType::Open});
 
+      // ----- row background -----
       ImVec2 rmin = ImGui::GetItemRectMin();
       ImVec2 rmax = { rmin.x + list_w, rmin.y + row_h };
-
       if (sel)
         ImGui::GetWindowDrawList()->AddRectFilled(rmin, rmax,
           to_imu32(cfg.color_selection_bg));
+      else if (hovered)
+        ImGui::GetWindowDrawList()->AddRectFilled(rmin, rmax,
+          to_imu32(cfg.color_hover_bg));
 
       // ----- icon -----
       ImVec2 win = ImGui::GetWindowPos();
@@ -511,7 +569,6 @@ static void draw_file_list(AppState *state, const UIConfig &cfg,
   clipper.End();
 
   update_scroll(state, content_h, row_h);
-
   ImGui::EndChild();
   ImGui::PopStyleColor();
 }
@@ -704,6 +761,52 @@ static void draw_popup(AppState *state, const UIConfig &cfg) {
   ImGui::PopStyleColor(2);
 }
 
+static void draw_search_bar(AppState *state, const UIConfig &cfg,
+                            float fw, float sh) {
+  ImGui::PushStyleColor(ImGuiCol_ChildBg, to_imvec4(cfg.color_panel_bg));
+  ImGui::BeginChild("##searchbar", {fw, sh}, false, ImGuiWindowFlags_NoScrollbar);
+
+  ImDrawList *dl = ImGui::GetWindowDrawList();
+  ImVec2 wp = ImGui::GetWindowPos();
+  dl->AddLine({wp.x, wp.y}, {wp.x + fw, wp.y}, to_imu32(cfg.color_border));
+
+  // label
+  ImGui::SetCursorPos({cfg.row_padding_x, (sh - ImGui::GetFontSize()) * 0.5f});
+  ImGui::PushStyleColor(ImGuiCol_Text, to_imvec4(cfg.color_text_dim));
+  ImGui::TextUnformatted("search: ");
+  ImGui::PopStyleColor();
+
+  float label_w = ImGui::CalcTextSize("search: ").x + cfg.row_padding_x;
+
+  static bool focus_search = false;
+  if (ImGui::IsWindowAppearing()) focus_search = true;
+  if (focus_search) { ImGui::SetKeyboardFocusHere(); focus_search = false; }
+
+  ImGui::SameLine(label_w);
+  ImGui::SetNextItemWidth(fw - label_w - cfg.row_padding_x);
+  ImGui::PushStyleColor(ImGuiCol_FrameBg, to_imvec4(cfg.color_panel_bg));
+  ImGui::PushStyleColor(ImGuiCol_Text, to_imvec4(cfg.color_text));
+
+  bool changed = ImGui::InputText("##search", state->search_buf,
+                                  sizeof(state->search_buf));
+  ImGui::PopStyleColor(2);
+
+  if (changed) {
+    state->selected_index = -1;
+    search_filter(state);
+  }
+
+  if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+    state->search_active = false;
+    memset(state->search_buf, 0, sizeof(state->search_buf));
+    state->filtered_entries.clear();
+    state->selected_index = -1;
+  }
+
+  ImGui::EndChild();
+  ImGui::PopStyleColor();
+}
+
 // ============================================================
 // ui_init / ui_shutdown
 // ============================================================
@@ -821,7 +924,10 @@ void ui_draw(AppState *state,
     if (show_pv) { ImGui::SameLine(0, 0); draw_preview(state, cfg, preview_w, content_h); }
 
     ImGui::SetCursorPos({0, pathbar_h + content_h});
-    draw_status(state, cfg, fb_width, status_h);
+    if (state->search_active)
+      draw_search_bar(state, cfg, fb_width, status_h);
+    else
+      draw_status(state, cfg, fb_width, status_h);
 
     draw_popup(state, cfg);
     ImGui::End();

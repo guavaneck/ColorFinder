@@ -90,6 +90,21 @@ static void sort_entries(std::vector<FileEntry> &entries) {
     });
 }
 
+void search_filter(AppState *state) {
+  state->filtered_entries.clear();
+  if (!state->search_active || state->search_buf[0] == '\0') return;
+
+  std::string needle = state->search_buf;
+  for (auto &ch : needle) ch = (char)std::tolower((unsigned char)ch);
+
+  for (const auto &fe : state->entries) {
+    std::string name = fe.name;
+    for (auto &ch : name) ch = (char)std::tolower((unsigned char)ch);
+    if (name.find(needle) != std::string::npos)
+      state->filtered_entries.push_back(fe);
+  }
+}
+
 // ----- lifecycle -----
 
 AppState *app_state_new(std::unordered_map<std::string, std::string> cfg) {
@@ -124,6 +139,9 @@ void refresh_entries(AppState *state) {
   }
 
   sort_entries(state->entries);
+
+  if (state->search_active)
+    search_filter(state);
 
   auto it = state->nav_cache.find(state->current_path.string());
   if (it != state->nav_cache.end() && it->second < (int)state->entries.size())

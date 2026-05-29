@@ -228,6 +228,8 @@ UIConfig uiconfig_load() {
   cfg.kb_paste          = get("keybind_paste",          "ctrl+v");
   cfg.kb_select_all     = get("keybind_select_all",     "ctrl+a");
   cfg.kb_toggle_preview = get("keybind_toggle_preview", "tab");
+  cfg.kb_open_file      = get("keybind_open_file",      "o");
+  cfg.kb_open_search    = get("keybind_open_search",    "ctrl+f");
 
   return cfg;
 }

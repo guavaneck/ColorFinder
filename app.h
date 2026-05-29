@@ -96,6 +96,10 @@ struct AppState {
   bool preview_visible = true;
   bool show_hidden     = false;
 
+  bool search_active       = false;
+  char search_buf[256]     = {};
+  std::vector<FileEntry> filtered_entries;
+
   std::unordered_map<std::string, int> nav_cache;
 };
 
@@ -112,6 +116,10 @@ std::vector<SidebarItem> sidebar_default_items();
 // ----- icon selection -----
 
 int icon_for_entry(const FileEntry &fe, bool selected);
+
+// ----- helpers -----
+
+void search_filter(AppState *state);
 
 // ----- lifecycle -----
 
