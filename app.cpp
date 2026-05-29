@@ -106,23 +106,32 @@ void refresh_entries(AppState *state) {
 
   sort_entries(state->entries);
 
-  std::strncpy(state->path_buf,
-               state->current_path.string().c_str(),
-               sizeof(state->path_buf) - 1);
+  auto it = state->nav_cache.find(state->current_path.string());
+  if (it != state->nav_cache.end() && it->second < (int)state->entries.size())
+    state->selected_index = it->second;
+  else
+    state->selected_index = state->entries.empty() ? -1 : 0;
+
+  std::strncpy(state->path_buf, state->current_path.string().c_str(), sizeof(state->path_buf) - 1);
+
+  std::strncpy(state->path_buf, state->current_path.string().c_str(), sizeof(state->path_buf) - 1);
 
   state->status_msg = ec
     ? "Error: " + ec.message()
     : state->current_path.string();
 
   state->preview_entries.clear();
-}
+  }
 
 void navigate_to(AppState *state, const fs::path &path) {
   std::error_code ec;
   fs::path canon = fs::canonical(path, ec);
   if (!ec && fs::is_directory(canon, ec)) {
+    if (state->selected_index >= 0)
+      state->nav_cache[state->current_path.string()] = state->selected_index;
     state->current_path = canon;
     refresh_entries(state);
+    refresh_preview(state);
   } else {
     state->status_msg = "Not a valid directory.";
     std::strncpy(state->path_buf,
@@ -133,11 +142,29 @@ void navigate_to(AppState *state, const fs::path &path) {
 
 void navigate_up(AppState *state) {
   fs::path parent = state->current_path.parent_path();
-  if (parent != state->current_path)
-    navigate_to(state, parent);
+  if (parent == state->current_path) return;
+
+  if (state->selected_index >= 0)
+    state->nav_cache[state->current_path.string()] = state->selected_index;
+
+  std::string came_from = state->current_path.filename().string();
+  state->current_path = parent;
+  refresh_entries(state);
+
+  // always find the child we came from by name, overrides any stale cache
+  for (int i = 0; i < (int)state->entries.size(); i++) {
+    if (state->entries[i].name == came_from) {
+      state->selected_index = i;
+      state->nav_cache[parent.string()] = i;
+      break;
+    }
+  }
+
+  refresh_preview(state);
 }
 
 void navigate_into_selected(AppState *state) {
+  state->sidebar_select = -1;
   if (state->selected_index < 0 ||
       state->selected_index >= (int)state->entries.size()) return;
   const FileEntry &fe = state->entries[state->selected_index];

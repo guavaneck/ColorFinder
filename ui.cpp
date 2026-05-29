@@ -42,6 +42,7 @@ enum class CmdType {
 struct Cmd {
   CmdType type  = CmdType::None;
   int     index = -1;
+  int     steps = 1;
 };
 
 // ============================================================
@@ -229,8 +230,12 @@ static Cmd collect_input(const AppState *state) {
     return {};
 
   // ----- scroll = move selection -----
-  if (io.MouseWheel < 0) return {CmdType::MoveDown};
-  if (io.MouseWheel > 0) return {CmdType::MoveUp};
+  if (io.MouseWheel != 0.f) {
+    // positive = scroll up = move selection up
+    int steps = (int)std::round(std::abs(io.MouseWheel));
+    if (steps < 1) steps = 1;
+    return { io.MouseWheel > 0 ? CmdType::MoveUp : CmdType::MoveDown, steps };
+  }
 
   // ----- navigation (repeating) -----
   if (key(g_keys.up,   true) || key(g_keys.up_alt,   true)) return {CmdType::MoveUp};
@@ -258,11 +263,11 @@ static Cmd collect_input(const AppState *state) {
 static void apply_cmd(AppState *state, const Cmd &cmd) {
   switch (cmd.type) {
     case CmdType::MoveUp:
-      select_move(state, -1);
+      select_move(state, -cmd.steps);
       break;
 
     case CmdType::MoveDown:
-      select_move(state, +1);
+      select_move(state, +cmd.steps);
       break;
 
     case CmdType::Open:
@@ -395,26 +400,30 @@ static void draw_sidebar(AppState *state, const UIConfig &cfg,
   for (int i = 0; i < (int)items.size(); i++) {
     bool sel = (state->sidebar_select == i);
 
-    ImGui::PushStyleColor(ImGuiCol_Header,
-      sel ? to_imvec4(cfg.color_selection_bg) : to_imvec4(cfg.color_sidebar_bg));
     ImGui::SetCursorPosX(0);
-    if (ImGui::Selectable(("##sb" + std::to_string(i)).c_str(), sel,
-                          ImGuiSelectableFlags_None, {sb_w, row_h})) {
+    ImGui::Selectable(("##sb" + std::to_string(i)).c_str(), sel,
+                      ImGuiSelectableFlags_None, {sb_w, row_h});
+
+    if (ImGui::IsItemClicked()) {
       state->sidebar_select = i;
       navigate_to(state, items[i].path);
     }
-    if (ImGui::IsItemHovered() && !sel)
-      ImGui::GetWindowDrawList()->AddRectFilled(
-        ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
-        to_imu32(cfg.color_hover_bg));
-    ImGui::PopStyleColor();
+
+    // clear highlight if we've navigated away from this sidebar item's path
+    if (sel && state->current_path != items[i].path)
+      state->sidebar_select = -1;
 
     ImVec2 rmin = ImGui::GetItemRectMin();
-    ImVec2 win  = ImGui::GetWindowPos();
+    ImVec2 rmax = { rmin.x + sb_w, rmin.y + row_h };
+
+    if (sel)
+      ImGui::GetWindowDrawList()->AddRectFilled(rmin, rmax,
+        to_imu32(cfg.color_selection_bg));
+
+    ImVec2 win = ImGui::GetWindowPos();
     ImGui::SetCursorPos({cfg.row_padding_x,
                          rmin.y - win.y + (row_h - icon_sz) * 0.5f});
     draw_icon_cell(items[i].icon_index, icon_sz);
-
     ImGui::SameLine(0, cfg.icon_label_gap);
     float avail = sb_w - cfg.row_padding_x - icon_sz - cfg.icon_label_gap - cfg.row_padding_x;
     ImGui::SetCursorPosY(rmin.y - win.y + (row_h - ImGui::GetFontSize()) * 0.5f);
@@ -437,7 +446,8 @@ static void draw_sidebar(AppState *state, const UIConfig &cfg,
 static void draw_file_list(AppState *state, const UIConfig &cfg,
                            float list_w, float content_h) {
   ImGui::PushStyleColor(ImGuiCol_ChildBg, to_imvec4(cfg.color_bg));
-  ImGui::BeginChild("##filelist", {list_w, content_h}, false);
+  ImGui::BeginChild("##filelist", {list_w, content_h}, false,
+                    ImGuiWindowFlags_NoScrollWithMouse);
 
   float icon_sz = (float)cfg.icon_size;
   float row_h   = cfg.row_height;
@@ -454,33 +464,26 @@ static void draw_file_list(AppState *state, const UIConfig &cfg,
 
       ImGui::PushID(i);
 
-      // ----- highlight (render only, no state) -----
-      ImGui::PushStyleColor(ImGuiCol_Header,
-        sel ? to_imvec4(cfg.color_selection_bg) : to_imvec4(cfg.color_bg));
-
       ImGui::Selectable("##row", sel,
         ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap,
         {list_w, row_h});
 
       bool hovered = ImGui::IsItemHovered();
 
-      // ----- mouse -> commands only -----
       if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
         apply_cmd(state, {CmdType::SelectIndex, i});
-
       if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
         apply_cmd(state, {CmdType::Open});
 
-      if (hovered && !sel)
-        ImGui::GetWindowDrawList()->AddRectFilled(
-          ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
-          to_imu32(cfg.color_hover_bg));
+      ImVec2 rmin = ImGui::GetItemRectMin();
+      ImVec2 rmax = { rmin.x + list_w, rmin.y + row_h };
 
-      ImGui::PopStyleColor();
+      if (sel)
+        ImGui::GetWindowDrawList()->AddRectFilled(rmin, rmax,
+          to_imu32(cfg.color_selection_bg));
 
       // ----- icon -----
-      ImVec2 rmin = ImGui::GetItemRectMin();
-      ImVec2 win  = ImGui::GetWindowPos();
+      ImVec2 win = ImGui::GetWindowPos();
       ImGui::SetCursorPos({
         cfg.row_padding_x,
         rmin.y - win.y + ImGui::GetScrollY() + (row_h - icon_sz) * 0.5f
@@ -507,7 +510,6 @@ static void draw_file_list(AppState *state, const UIConfig &cfg,
   }
   clipper.End();
 
-  // ----- scroll - keep selection centered -----
   update_scroll(state, content_h, row_h);
 
   ImGui::EndChild();
@@ -731,7 +733,6 @@ void ui_init(const UIConfig &cfg) {
   c[ImGuiCol_PopupBg]              = to_imvec4(cfg.color_panel_bg);
   c[ImGuiCol_Border]               = to_imvec4(cfg.color_border);
   c[ImGuiCol_FrameBg]              = to_imvec4(cfg.color_bg);
-  c[ImGuiCol_FrameBgHovered]       = to_imvec4(cfg.color_hover_bg);
   c[ImGuiCol_FrameBgActive]        = to_imvec4(cfg.color_selection_bg);
   c[ImGuiCol_TitleBg]              = to_imvec4(cfg.color_panel_bg);
   c[ImGuiCol_TitleBgActive]        = to_imvec4(cfg.color_panel_bg);
@@ -739,11 +740,10 @@ void ui_init(const UIConfig &cfg) {
   c[ImGuiCol_ScrollbarGrab]        = to_imvec4(cfg.color_scrollbar_fg);
   c[ImGuiCol_ScrollbarGrabHovered] = to_imvec4(cfg.color_scrollbar_fg);
   c[ImGuiCol_ScrollbarGrabActive]  = to_imvec4(cfg.color_text_dim);
-  c[ImGuiCol_Header]               = to_imvec4(cfg.color_selection_bg);
-  c[ImGuiCol_HeaderHovered]        = to_imvec4(cfg.color_hover_bg);
-  c[ImGuiCol_HeaderActive]         = to_imvec4(cfg.color_selection_bg);
+  c[ImGuiCol_Header]               = {0, 0, 0, 0};
+  c[ImGuiCol_HeaderHovered]        = {0, 0, 0, 0};
+  c[ImGuiCol_HeaderActive]         = {0, 0, 0, 0};
   c[ImGuiCol_Button]               = to_imvec4(cfg.color_bg);
-  c[ImGuiCol_ButtonHovered]        = to_imvec4(cfg.color_hover_bg);
   c[ImGuiCol_ButtonActive]         = to_imvec4(cfg.color_selection_bg);
   c[ImGuiCol_Text]                 = to_imvec4(cfg.color_text);
   c[ImGuiCol_TextDisabled]         = to_imvec4(cfg.color_text_dim);

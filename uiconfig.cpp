@@ -81,7 +81,6 @@ color_text = d0d0d0
 color_text_dim = 606060
 color_text_selected = ffffff
 color_selection_bg = 2a4a7a
-color_hover_bg = 222222
 color_scrollbar = 2a2a2a
 color_scrollbar_fg = 444444
 color_status_bg = 0f0f0f
@@ -188,7 +187,6 @@ UIConfig uiconfig_load() {
   cfg.color_text_dim      = getc("color_text_dim",      cfg.color_text_dim);
   cfg.color_text_selected = getc("color_text_selected", cfg.color_text_selected);
   cfg.color_selection_bg  = getc("color_selection_bg",  cfg.color_selection_bg);
-  cfg.color_hover_bg      = getc("color_hover_bg",      cfg.color_hover_bg);
   cfg.color_scrollbar     = getc("color_scrollbar",     cfg.color_scrollbar);
   cfg.color_scrollbar_fg  = getc("color_scrollbar_fg",  cfg.color_scrollbar_fg);
   cfg.color_status_bg     = getc("color_status_bg",     cfg.color_status_bg);

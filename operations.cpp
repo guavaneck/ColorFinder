@@ -6,26 +6,6 @@
 
 namespace fs = std::filesystem;
 
-void list_directory(const fs::path &current) {
-  std::cout << "Contents of " << current << ":\n";
-  for (const auto &entry : fs::directory_iterator(current)) {
-    std::cout << entry.path().filename();
-    if (fs::is_directory(entry)) {
-      std::cout << " [DIR]";
-    }
-    std::cout << "\n";
-  }
-}
-
-void change_directory(fs::path &current, const std::string &dir) {
-  fs::path newPath = current / dir;
-  if (fs::exists(newPath) && fs::is_directory(newPath)) {
-    current = fs::canonical(newPath);
-  } else {
-    std::cout << "Directory not found!\n";
-  }
-}
-
 void create_file(const fs::path &filePath) {
   std::ofstream file(filePath);
   if (file) {

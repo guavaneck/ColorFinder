@@ -95,6 +95,8 @@ struct AppState {
   std::unordered_map<std::string, std::string> cfg;
 
   bool preview_visible = true;
+
+  std::unordered_map<std::string, int> nav_cache;
 };
 
 // ----- sidebar -----

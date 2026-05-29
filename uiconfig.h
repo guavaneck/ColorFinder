@@ -27,7 +27,6 @@ struct UIConfig {
   Color color_text_dim        = {96,  96,  96,  255};
   Color color_text_selected   = {255, 255, 255, 255};
   Color color_selection_bg    = {42,  74,  122, 255};
-  Color color_hover_bg        = {34,  34,  34,  255};
   Color color_scrollbar       = {42,  42,  42,  255};
   Color color_scrollbar_fg    = {68,  68,  68,  255};
   Color color_status_bg       = {15,  15,  15,  255};
