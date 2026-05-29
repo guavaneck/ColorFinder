@@ -117,6 +117,7 @@ keybind_cut = ctrl+x
 keybind_paste = ctrl+v
 keybind_select_all = ctrl+a
 keybind_toggle_preview = tab
+keybind_toggle_hidden = .
 )";
 
 UIConfig uiconfig_load() {
@@ -230,6 +231,7 @@ UIConfig uiconfig_load() {
   cfg.kb_toggle_preview = get("keybind_toggle_preview", "tab");
   cfg.kb_open_file      = get("keybind_open_file",      "o");
   cfg.kb_open_search    = get("keybind_open_search",    "ctrl+f");
+  cfg.kb_toggle_hidden  = get("keybind_toggle_hidden",  ".");
 
   return cfg;
 }

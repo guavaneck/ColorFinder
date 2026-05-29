@@ -50,6 +50,16 @@ struct FileEntry {
   std::string modified;
 };
 
+// ----- clipboard -----
+
+enum class ClipboardOp { None, Copy, Cut };
+
+struct ClipboardState {
+  ClipboardOp              op = ClipboardOp::None;
+  std::filesystem::path    source_dir;
+  std::vector<std::string> names;
+};
+
 // ----- popup kind -----
 
 enum class PopupKind {
@@ -81,6 +91,8 @@ struct AppState {
   int sidebar_hover  = -1;
   int sidebar_select = -1;
 
+  std::vector<int> selected_indices;
+
   FocusPanel focus = FocusPanel::Main;
 
   std::vector<FileEntry> preview_entries;
@@ -96,11 +108,13 @@ struct AppState {
   bool preview_visible = true;
   bool show_hidden     = false;
 
-  bool search_active       = false;
-  char search_buf[256]     = {};
+  bool search_active         = false;
+  char search_buf[256]       = {};
   std::vector<FileEntry> filtered_entries;
 
   std::unordered_map<std::string, int> nav_cache;
+
+  ClipboardState clipboard;
 };
 
 // ----- sidebar -----
@@ -120,6 +134,16 @@ int icon_for_entry(const FileEntry &fe, bool selected);
 // ----- helpers -----
 
 void search_filter(AppState *state);
+
+// ----- selection -----
+
+bool is_selected(const AppState *state, int i);
+void selection_set(AppState *state, int i);
+void selection_toggle(AppState *state, int i);
+void selection_add_range(AppState *state, int from, int to);
+void selection_clear(AppState *state);
+void selection_all(AppState *state);
+void select_move(AppState *state, int delta);
 
 // ----- lifecycle -----
 
@@ -145,7 +169,6 @@ void action_delete_selected(AppState *state);
 void action_create_file(AppState *state, const std::string &name);
 void action_create_folder(AppState *state, const std::string &name);
 void action_rename(AppState *state, const std::string &new_name);
-
-// ----- selection -----
-
-void select_move(AppState *state, int delta);
+void action_copy_selected(AppState *state);
+void action_cut_selected(AppState *state);
+void action_paste(AppState *state);

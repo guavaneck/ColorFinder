@@ -71,6 +71,7 @@ struct UIConfig {
   std::string kb_toggle_preview = "tab";
   std::string kb_open_file      = "o";
   std::string kb_open_search    = "ctrl+f";
+  std::string kb_toggle_hidden  = ".";
 };
 
 // ----- Loader -----

@@ -105,6 +105,66 @@ void search_filter(AppState *state) {
   }
 }
 
+// ----- selection -----
+
+bool is_selected(const AppState *state, int i) {
+  for (int s : state->selected_indices)
+    if (s == i) return true;
+  return false;
+}
+
+void selection_set(AppState *state, int i) {
+  state->selected_indices = { i };
+  state->selected_index   = i;
+}
+
+void selection_toggle(AppState *state, int i) {
+  for (auto it = state->selected_indices.begin();
+       it != state->selected_indices.end(); ++it) {
+    if (*it == i) {
+      state->selected_indices.erase(it);
+      // keep selected_index pointing at last remaining, or -1
+      state->selected_index = state->selected_indices.empty()
+        ? -1 : state->selected_indices.back();
+      return;
+    }
+  }
+  state->selected_indices.push_back(i);
+  state->selected_index = i;
+}
+
+void selection_add_range(AppState *state, int from, int to) {
+  if (from > to) std::swap(from, to);
+  for (int i = from; i <= to; i++)
+    if (!is_selected(state, i))
+      state->selected_indices.push_back(i);
+  state->selected_index = to;
+}
+
+void selection_clear(AppState *state) {
+  state->selected_indices.clear();
+  state->selected_index = -1;
+}
+
+void selection_all(AppState *state) {
+  state->selected_indices.clear();
+  for (int i = 0; i < (int)state->entries.size(); i++)
+    state->selected_indices.push_back(i);
+  state->selected_index = state->entries.empty() ? -1 : (int)state->entries.size() - 1;
+}
+
+void select_move(AppState *state, int delta) {
+  if (state->entries.empty()) return;
+  int n = (int)state->entries.size();
+  int next;
+  if (state->selected_index < 0)
+    next = delta > 0 ? 0 : n - 1;
+  else
+    next = std::clamp(state->selected_index + delta, 0, n - 1);
+  selection_set(state, next);
+  refresh_preview(state);
+}
+
 // ----- lifecycle -----
 
 AppState *app_state_new(std::unordered_map<std::string, std::string> cfg) {
@@ -122,8 +182,8 @@ void app_state_free(AppState *state) { delete state; }
 
 void refresh_entries(AppState *state) {
   state->entries.clear();
-  state->selected_index = -1;
-  state->hovered_index  = -1;
+  selection_clear(state);
+  state->hovered_index = -1;
 
   std::error_code ec;
   for (const auto &e : fs::directory_iterator(state->current_path, ec)) {
@@ -134,7 +194,7 @@ void refresh_entries(AppState *state) {
     fe.is_dir   = fs::is_directory(e, ec);
     fe.size     = fe.is_dir ? 0 : fs::file_size(e, ec);
     fe.modified = format_mtime(e.path());
-    fe.path = state->current_path / fe.name;
+    fe.path     = state->current_path / fe.name;
     state->entries.push_back(std::move(fe));
   }
 
@@ -145,20 +205,19 @@ void refresh_entries(AppState *state) {
 
   auto it = state->nav_cache.find(state->current_path.string());
   if (it != state->nav_cache.end() && it->second < (int)state->entries.size())
-    state->selected_index = it->second;
-  else
-    state->selected_index = state->entries.empty() ? -1 : 0;
+    selection_set(state, it->second);
+  else if (!state->entries.empty())
+    selection_set(state, 0);
 
-  std::strncpy(state->path_buf, state->current_path.string().c_str(), sizeof(state->path_buf) - 1);
-
-  std::strncpy(state->path_buf, state->current_path.string().c_str(), sizeof(state->path_buf) - 1);
+  std::strncpy(state->path_buf, state->current_path.string().c_str(),
+               sizeof(state->path_buf) - 1);
 
   state->status_msg = ec
     ? "Error: " + ec.message()
     : state->current_path.string();
 
   state->preview_entries.clear();
-  }
+}
 
 void navigate_to(AppState *state, const fs::path &path) {
   std::error_code ec;
@@ -188,10 +247,9 @@ void navigate_up(AppState *state) {
   state->current_path = parent;
   refresh_entries(state);
 
-  // always find the child we came from by name, overrides any stale cache
   for (int i = 0; i < (int)state->entries.size(); i++) {
     if (state->entries[i].name == came_from) {
-      state->selected_index = i;
+      selection_set(state, i);
       state->nav_cache[parent.string()] = i;
       break;
     }
@@ -238,36 +296,44 @@ void refresh_preview(AppState *state) {
 
 void action_open_selected(AppState *state,
                           const std::unordered_map<std::string, std::string> &cfg) {
-  if (state->selected_index < 0 ||
-      state->selected_index >= (int)state->entries.size()) return;
+  if (state->selected_indices.empty()) return;
 
-  const FileEntry &fe = state->entries[state->selected_index];
-  if (fe.is_dir) {
-    navigate_to(state, state->current_path / fe.name);
-    return;
+  for (int i : state->selected_indices) {
+    if (i < 0 || i >= (int)state->entries.size()) continue;
+    const FileEntry &fe = state->entries[i];
+    if (fe.is_dir) {
+      if (state->selected_indices.size() == 1)
+        navigate_to(state, state->current_path / fe.name);
+      continue;
+    }
+    fs::path full   = state->current_path / fe.name;
+    std::string ext = full.extension().string();
+    if (!ext.empty() && ext[0] == '.') ext = ext.substr(1);
+    std::string key     = "opener_ext_" + ext;
+    std::string command = config_get(cfg, key,
+                            config_get(cfg, "opener_fallback", "xdg-open %f"));
+    std::string quoted  = "\"" + full.string() + "\"";
+    size_t pos;
+    while ((pos = command.find("%f")) != std::string::npos)
+      command.replace(pos, 2, quoted);
+    command += " &";
+    std::system(command.c_str());
   }
-
-  fs::path full = state->current_path / fe.name;
-  std::string ext = full.extension().string();
-  if (!ext.empty() && ext[0] == '.') ext = ext.substr(1);
-
-  std::string key     = "opener_ext_" + ext;
-  std::string command = config_get(cfg, key,
-                          config_get(cfg, "opener_fallback", "xdg-open %f"));
-  std::string quoted  = "\"" + full.string() + "\"";
-  size_t pos;
-  while ((pos = command.find("%f")) != std::string::npos)
-    command.replace(pos, 2, quoted);
-  command += " &";
-  std::system(command.c_str());
 }
 
 void action_delete_selected(AppState *state) {
-  if (state->selected_index < 0 ||
-      state->selected_index >= (int)state->entries.size()) return;
-  const std::string &name = state->entries[state->selected_index].name;
-  delete_item(state->current_path / name);
-  state->status_msg = "Deleted: " + name;
+  if (state->selected_indices.empty()) return;
+
+  std::vector<std::string> to_delete;
+  for (int i : state->selected_indices)
+    if (i >= 0 && i < (int)state->entries.size())
+      to_delete.push_back(state->entries[i].name);
+
+  for (const auto &name : to_delete)
+    delete_item(state->current_path / name);
+
+  state->status_msg = "Deleted " + std::to_string(to_delete.size()) + " item(s)";
+  selection_clear(state);
   refresh_entries(state);
 }
 
@@ -296,14 +362,72 @@ void action_rename(AppState *state, const std::string &new_name) {
   refresh_entries(state);
 }
 
-// ----- selection -----
+void action_copy_selected(AppState *state) {
+  if (state->selected_indices.empty()) return;
+  state->clipboard.op         = ClipboardOp::Copy;
+  state->clipboard.source_dir = state->current_path;
+  state->clipboard.names.clear();
+  for (int i : state->selected_indices)
+    if (i >= 0 && i < (int)state->entries.size())
+      state->clipboard.names.push_back(state->entries[i].name);
+  state->status_msg = "Copied " + std::to_string(state->clipboard.names.size()) + " item(s)";
+}
 
-void select_move(AppState *state, int delta) {
-  if (state->entries.empty()) return;
-  int n = (int)state->entries.size();
-  if (state->selected_index < 0)
-    state->selected_index = delta > 0 ? 0 : n - 1;
-  else
-    state->selected_index = std::clamp(state->selected_index + delta, 0, n - 1);
-  refresh_preview(state);
+void action_cut_selected(AppState *state) {
+  if (state->selected_indices.empty()) return;
+  state->clipboard.op         = ClipboardOp::Cut;
+  state->clipboard.source_dir = state->current_path;
+  state->clipboard.names.clear();
+  for (int i : state->selected_indices)
+    if (i >= 0 && i < (int)state->entries.size())
+      state->clipboard.names.push_back(state->entries[i].name);
+  state->status_msg = "Cut " + std::to_string(state->clipboard.names.size()) + " item(s)";
+}
+
+void action_paste(AppState *state) {
+  if (state->clipboard.op == ClipboardOp::None ||
+      state->clipboard.names.empty()) return;
+
+  std::error_code ec;
+  for (const auto &name : state->clipboard.names) {
+    fs::path src = state->clipboard.source_dir / name;
+    fs::path dst = state->current_path / name;
+
+    if (!fs::exists(src, ec)) {
+      state->status_msg = "Paste failed: source gone: " + name;
+      continue;
+    }
+
+    // pasting into the same dir: make a renamed copy
+    if (fs::equivalent(src.parent_path(), state->current_path, ec)) {
+      std::string stem = dst.stem().string();
+      std::string ext  = dst.extension().string();
+      int n = 1;
+      while (fs::exists(dst, ec))
+        dst = state->current_path / (stem + "_copy" + (n++ > 1 ? std::to_string(n) : "") + ext);
+    }
+
+    if (state->clipboard.op == ClipboardOp::Copy) {
+      if (fs::is_directory(src, ec))
+        fs::copy(src, dst,
+                 fs::copy_options::recursive |
+                 fs::copy_options::overwrite_existing, ec);
+      else
+        fs::copy_file(src, dst,
+                      fs::copy_options::overwrite_existing, ec);
+    } else {
+      fs::rename(src, dst, ec);
+    }
+
+    if (ec) {
+      state->status_msg = "Paste failed: " + ec.message();
+      return;
+    }
+  }
+
+  if (state->clipboard.op == ClipboardOp::Cut)
+    state->clipboard = {};
+
+  state->status_msg = "Pasted to: " + state->current_path.string();
+  refresh_entries(state);
 }

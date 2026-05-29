@@ -33,6 +33,7 @@ enum class CmdType {
   Back,
   SelectIndex,
   TogglePreview,
+  ToggleHidden,
   Delete,
   Rename,
   NewFile,
@@ -162,6 +163,7 @@ static ImGuiKey keyname_to_imkey(const std::string &n) {
   if (n == "f2")        return ImGuiKey_F2;
   if (n == "f5")        return ImGuiKey_F5;
   if (n == "~")         return ImGuiKey_GraveAccent;
+  if (n == ".")         return ImGuiKey_Period;
   if (n.size() == 1) {
     char c = n[0];
     if (c >= 'a' && c <= 'z') return (ImGuiKey)(ImGuiKey_A + (c - 'a'));
@@ -198,6 +200,9 @@ struct ResolvedKeys {
   KeySpec open_file;
   KeySpec go_home;
   KeySpec open_search;
+  KeySpec copy, cut, paste;
+  KeySpec select_all;
+  KeySpec toggle_hidden;
 };
 
 static ResolvedKeys g_keys;
@@ -218,9 +223,14 @@ static void resolve_keys(const UIConfig &cfg) {
   g_keys.new_file       = parse_keybind(cfg.kb_new_file);
   g_keys.new_folder     = parse_keybind(cfg.kb_new_folder);
   g_keys.toggle_preview = parse_keybind(cfg.kb_toggle_preview);
-  g_keys.open_file = parse_keybind(cfg.kb_open_file);
-  g_keys.go_home = parse_keybind(cfg.kb_go_home);
-  g_keys.open_search = parse_keybind(cfg.kb_open_search);
+  g_keys.open_file      = parse_keybind(cfg.kb_open_file);
+  g_keys.go_home        = parse_keybind(cfg.kb_go_home);
+  g_keys.open_search    = parse_keybind(cfg.kb_open_search);
+  g_keys.copy           = parse_keybind(cfg.kb_copy);
+  g_keys.cut            = parse_keybind(cfg.kb_cut);
+  g_keys.paste          = parse_keybind(cfg.kb_paste);
+  g_keys.select_all     = parse_keybind(cfg.kb_select_all);
+  g_keys.toggle_hidden = parse_keybind(cfg.kb_toggle_hidden);
 }
 
 // Check a resolved key, with optional repeat.
@@ -240,40 +250,42 @@ static bool key(const KeySpec &k, bool repeat = false) {
 
 static Cmd collect_input(const AppState *state) {
   ImGuiIO &io = ImGui::GetIO();
+  io.KeyRepeatDelay = 0.75f;
+  io.KeyRepeatRate  = 0.07f;
 
-  // Block navigation while text input is active.
   if (io.WantTextInput || state->path_editing || state->popup.kind != PopupKind::None)
     return {};
 
   // ----- scroll = move selection -----
   if (io.MouseWheel != 0.f) {
-    // positive = scroll up = move selection up
     int steps = (int)std::round(std::abs(io.MouseWheel));
     if (steps < 1) steps = 1;
-    return { io.MouseWheel > 0 ? CmdType::MoveUp : CmdType::MoveDown, steps };
+    return { io.MouseWheel > 0 ? CmdType::MoveUp : CmdType::MoveDown, -1, steps };
   }
 
-  // ----- navigation (repeating) -----
-  if (key(g_keys.up,   true) || key(g_keys.up_alt,   true)) return {CmdType::MoveUp};
-  if (key(g_keys.down, true) || key(g_keys.down_alt, true)) return {CmdType::MoveDown};
-
-  // ----- navigation (single press) -----
-  if (key(g_keys.left,  false) || key(g_keys.left_alt,  false) || key(g_keys.back,  false)) return {CmdType::Back};
-  if (key(g_keys.right, false) || key(g_keys.right_alt, false) || key(g_keys.enter, false)) return {CmdType::Open};
-
+  if (!io.KeyCtrl && !io.KeyAlt) {
+    if (key(g_keys.up,   true) || key(g_keys.up_alt,   true)) return {CmdType::MoveUp};
+    if (key(g_keys.down, true) || key(g_keys.down_alt, true)) return {CmdType::MoveDown};
+    if (key(g_keys.left,  false) || key(g_keys.left_alt,  false) || key(g_keys.back, false)) return {CmdType::Back};
+    if (key(g_keys.right, false) || key(g_keys.right_alt, false) || key(g_keys.enter, false)) return {CmdType::Open};
+  }
   // ----- actions -----
   if (key(g_keys.toggle_preview, false)) return {CmdType::TogglePreview};
 
-  if (key(g_keys.del,    false) && state->selected_index >= 0) return {CmdType::Delete};
-  if (key(g_keys.rename, false) && state->selected_index >= 0) return {CmdType::Rename};
+  if (key(g_keys.del,    false) && !state->selected_indices.empty()) return {CmdType::Delete};
+  if (key(g_keys.rename, false) && !state->selected_indices.empty()) return {CmdType::Rename};
   if (key(g_keys.new_file,   false)) return {CmdType::NewFile};
   if (key(g_keys.new_folder, false)) return {CmdType::NewFolder};
 
-  if (key(g_keys.open_file, false) && state->selected_index >= 0) return {CmdType::OpenFile};
+  if (key(g_keys.open_file,  false) && !state->selected_indices.empty()) return {CmdType::OpenFile};
+  if (key(g_keys.go_home,    false)) return {CmdType::GoHome};
+  if (key(g_keys.open_search,false)) return {CmdType::OpenSearch};
 
-  if (key(g_keys.go_home, false)) return {CmdType::GoHome};
-
-  if (key(g_keys.open_search, false)) return {CmdType::OpenSearch};
+  if (key(g_keys.copy,  false) && !state->selected_indices.empty()) return {CmdType::Copy};
+  if (key(g_keys.cut,   false) && !state->selected_indices.empty()) return {CmdType::Cut};
+  if (key(g_keys.paste, false)) return {CmdType::Paste};
+  if (key(g_keys.select_all, false)) return {CmdType::SelectAll};
+  if (key(g_keys.toggle_hidden, false)) return {CmdType::ToggleHidden};
 
   return {};
 }
@@ -302,26 +314,59 @@ static void apply_cmd(AppState *state, const Cmd &cmd) {
 
     case CmdType::SelectIndex:
       if (cmd.index >= 0 && cmd.index < (int)state->entries.size()) {
-        state->selected_index = cmd.index;
+        selection_set(state, cmd.index);
         refresh_preview(state);
       }
+      break;
+
+    case CmdType::SelectToggle:
+      if (cmd.index >= 0 && cmd.index < (int)state->entries.size()) {
+        selection_toggle(state, cmd.index);
+        refresh_preview(state);
+      }
+      break;
+
+    case CmdType::SelectRange:
+      if (cmd.index >= 0 && cmd.index < (int)state->entries.size()) {
+        selection_add_range(state, state->selected_index, cmd.index);
+        refresh_preview(state);
+      }
+      break;
+
+    case CmdType::SelectAll:
+      selection_all(state);
       break;
 
     case CmdType::TogglePreview:
       state->preview_visible = !state->preview_visible;
       break;
 
+    case CmdType::ToggleHidden:
+      state->show_hidden = !state->show_hidden;
+      refresh_entries(state);
+      refresh_preview(state);
+      state->status_msg = state->show_hidden ? "Showing hidden files" : "Hiding hidden files";
+      break;
+
     case CmdType::Delete:
-      state->popup.kind        = PopupKind::DeleteConfirm;
-      state->popup.target_name = state->entries[state->selected_index].name;
+      if (!state->selected_indices.empty()) {
+        state->popup.kind = PopupKind::DeleteConfirm;
+        if (state->selected_indices.size() == 1)
+          state->popup.target_name = state->entries[state->selected_indices[0]].name;
+        else
+          state->popup.target_name = std::to_string(state->selected_indices.size()) + " items";
+      }
       break;
 
     case CmdType::Rename:
-      state->popup.kind = PopupKind::Rename;
-      std::strncpy(state->popup.input,
-                   state->entries[state->selected_index].name.c_str(),
-                   sizeof(state->popup.input) - 1);
-      state->popup.target_name = state->entries[state->selected_index].name;
+      if (!state->selected_indices.empty()) {
+        int i = state->selected_indices.back();
+        state->popup.kind = PopupKind::Rename;
+        std::strncpy(state->popup.input,
+                     state->entries[i].name.c_str(),
+                     sizeof(state->popup.input) - 1);
+        state->popup.target_name = state->entries[i].name;
+      }
       break;
 
     case CmdType::NewFile:
@@ -348,14 +393,26 @@ static void apply_cmd(AppState *state, const Cmd &cmd) {
       state->search_active = true;
       memset(state->search_buf, 0, sizeof(state->search_buf));
       state->filtered_entries.clear();
-      state->selected_index = -1;
+      selection_clear(state);
       break;
 
     case CmdType::CloseSearch:
       state->search_active = false;
       memset(state->search_buf, 0, sizeof(state->search_buf));
       state->filtered_entries.clear();
-      state->selected_index = -1;
+      selection_clear(state);
+      break;
+
+    case CmdType::Copy:
+      action_copy_selected(state);
+      break;
+
+    case CmdType::Cut:
+      action_cut_selected(state);
+      break;
+
+    case CmdType::Paste:
+      action_paste(state);
       break;
 
     default:
@@ -510,7 +567,15 @@ static void draw_file_list(AppState *state, const UIConfig &cfg,
       if (i < 0 || i >= n) continue;
 
       const FileEntry &fe = visible[i];
-      bool sel = (state->selected_index == i);
+      bool sel = is_selected(state, i);
+
+      // check if this entry is in the cut clipboard
+      bool is_cut = false;
+      if (state->clipboard.op == ClipboardOp::Cut &&
+          state->clipboard.source_dir == state->current_path) {
+        for (const auto &name : state->clipboard.names)
+          if (name == fe.name) { is_cut = true; break; }
+      }
 
       ImGui::PushID(i);
 
@@ -525,8 +590,15 @@ static void draw_file_list(AppState *state, const UIConfig &cfg,
       bool hovered = ImGui::IsItemHovered();
       ImGui::PopStyleColor(3);
 
-      if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-        apply_cmd(state, {CmdType::SelectIndex, i});
+      if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        ImGuiIO &io = ImGui::GetIO();
+        if (io.KeyShift && state->selected_index >= 0)
+          apply_cmd(state, {CmdType::SelectRange, i});
+        else if (io.KeyCtrl)
+          apply_cmd(state, {CmdType::SelectToggle, i});
+        else
+          apply_cmd(state, {CmdType::SelectIndex, i});
+      }
       if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
         apply_cmd(state, {CmdType::Open});
 
@@ -536,9 +608,6 @@ static void draw_file_list(AppState *state, const UIConfig &cfg,
       if (sel)
         ImGui::GetWindowDrawList()->AddRectFilled(rmin, rmax,
           to_imu32(cfg.color_selection_bg));
-      else if (hovered)
-        ImGui::GetWindowDrawList()->AddRectFilled(rmin, rmax,
-          to_imu32(cfg.color_hover_bg));
 
       // ----- icon -----
       ImVec2 win = ImGui::GetWindowPos();
@@ -559,7 +628,9 @@ static void draw_file_list(AppState *state, const UIConfig &cfg,
       ImGui::SetCursorPosY(
         rmin.y - win.y + ImGui::GetScrollY() + (row_h - ImGui::GetFontSize()) * 0.5f);
       ImGui::PushStyleColor(ImGuiCol_Text,
-        sel ? to_imvec4(cfg.color_text_selected) : to_imvec4(cfg.color_text));
+        is_cut ? to_imvec4(cfg.color_text_dim) :
+        sel    ? to_imvec4(cfg.color_text_selected) :
+                 to_imvec4(cfg.color_text));
       ImGui::TextUnformatted(truncate(fe.name, avail).c_str());
       ImGui::PopStyleColor();
 
