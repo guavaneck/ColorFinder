@@ -24,6 +24,7 @@ compile_command = bash -c 'g++ ./*.cpp -o app $(pkg-config --cflags --libs gtk+-
 keybind_enter_dir   = Return
 keybind_back_dir    = BackSpace
 keybind_open_search = <ctrl>f
+show_hidden = false
 
 # File actions
 keybind_open_file     = o

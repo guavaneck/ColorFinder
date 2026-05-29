@@ -11,6 +11,7 @@ static constexpr const char *KEY_COMPILE_COMMAND = "compile_command";
 static constexpr const char *KEY_KB_ENTER_DIR    = "keybind_enter_dir";
 static constexpr const char *KEY_KB_BACK_DIR     = "keybind_back_dir";
 static constexpr const char *KEY_KB_OPEN_SEARCH  = "keybind_open_search";
+static constexpr const char *KEY_SHOW_HIDDEN     = "show_hidden";
 
 // File actions
 static constexpr const char *KEY_KB_OPEN_FILE      = "keybind_open_file";

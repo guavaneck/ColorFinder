@@ -39,13 +39,12 @@ static constexpr int ICON_FILE_CODE_SEL    = 27;
 static constexpr int ICON_FILE_ARCHIVE     = 28;
 static constexpr int ICON_FILE_ARCHIVE_SEL = 29;
 // Row 3
-static constexpr int ICON_FILE_PDF         = 30;
-static constexpr int ICON_FILE_PDF_SEL     = 31;
 
 // ----- file entry -----
 
 struct FileEntry {
   std::string name;
+  std::filesystem::path path;
   bool        is_dir   = false;
   uintmax_t   size     = 0;
   std::string modified;
@@ -95,6 +94,7 @@ struct AppState {
   std::unordered_map<std::string, std::string> cfg;
 
   bool preview_visible = true;
+  bool show_hidden     = false;
 
   std::unordered_map<std::string, int> nav_cache;
 };

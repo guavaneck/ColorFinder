@@ -28,7 +28,24 @@ std::vector<SidebarItem> sidebar_default_items() {
 // ----- icon selection -----
 
 int icon_for_entry(const FileEntry &fe, bool selected) {
-  if (fe.is_dir) return selected ? ICON_FOLDER_SEL : ICON_FOLDER;
+  if (fe.is_dir) {
+    const char *home = std::getenv("HOME");
+    if (home) {
+      std::error_code ec;
+      fs::path h(home);
+      fs::path canon = fs::weakly_canonical(fe.path, ec);
+      if (!ec) {
+        if (canon == h)                return selected ? ICON_FOLDER_HOME_SEL  : ICON_FOLDER_HOME;
+        if (canon == h / "Downloads")  return selected ? ICON_FOLDER_DL_SEL    : ICON_FOLDER_DL;
+        if (canon == h / "Documents")  return selected ? ICON_FOLDER_DOCS_SEL  : ICON_FOLDER_DOCS;
+        if (canon == h / "Pictures")   return selected ? ICON_FOLDER_PIC_SEL   : ICON_FOLDER_PIC;
+        if (canon == h / "Music")      return selected ? ICON_FOLDER_MUSIC_SEL : ICON_FOLDER_MUSIC;
+        if (canon == h / "Videos")     return selected ? ICON_FOLDER_VID_SEL   : ICON_FOLDER_VID;
+        if (canon == h / "Desktop")    return selected ? ICON_FOLDER_DESK_SEL  : ICON_FOLDER_DESK;
+      }
+    }
+    return selected ? ICON_FOLDER_SEL : ICON_FOLDER;
+  }
 
   std::string ext;
   auto dot = fe.name.rfind('.');
@@ -48,8 +65,6 @@ int icon_for_entry(const FileEntry &fe, bool selected) {
     return selected ? ICON_FILE_CODE_SEL : ICON_FILE_CODE;
   if (ext=="zip"||ext=="tar"||ext=="gz"||ext=="xz"||ext=="bz2"||ext=="7z"||ext=="rar")
     return selected ? ICON_FILE_ARCHIVE_SEL : ICON_FILE_ARCHIVE;
-  if (ext=="pdf")
-    return selected ? ICON_FILE_PDF_SEL : ICON_FILE_PDF;
   return selected ? ICON_FILE_SEL : ICON_FILE;
 }
 
@@ -81,6 +96,7 @@ AppState *app_state_new(std::unordered_map<std::string, std::string> cfg) {
   AppState *s = new AppState();
   s->cfg      = std::move(cfg);
   s->current_path = fs::current_path();
+  s->show_hidden = config_get(cfg, "show_hidden", "false") == "true";
   refresh_entries(s);
   return s;
 }
@@ -96,11 +112,14 @@ void refresh_entries(AppState *state) {
 
   std::error_code ec;
   for (const auto &e : fs::directory_iterator(state->current_path, ec)) {
+    if (!state->show_hidden && e.path().filename().string()[0] == '.')
+      continue;
     FileEntry fe;
     fe.name     = e.path().filename().string();
     fe.is_dir   = fs::is_directory(e, ec);
     fe.size     = fe.is_dir ? 0 : fs::file_size(e, ec);
     fe.modified = format_mtime(e.path());
+    fe.path = state->current_path / fe.name;
     state->entries.push_back(std::move(fe));
   }
 
@@ -186,6 +205,8 @@ void refresh_preview(AppState *state) {
   fs::path dir = state->current_path / fe.name;
   std::error_code ec;
   for (const auto &e : fs::directory_iterator(dir, ec)) {
+    if (!state->show_hidden && e.path().filename().string()[0] == '.')
+      continue;
     FileEntry pfe;
     pfe.name   = e.path().filename().string();
     pfe.is_dir = fs::is_directory(e, ec);
